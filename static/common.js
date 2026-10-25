@@ -15,6 +15,42 @@ const LEVELS = [
 const levelInfo = (v) => LEVELS.find((l) => v < l.max);
 const levelColor = (v) => (Number.isFinite(v) ? levelInfo(v).color : '');
 
+// Ориентировъчни нива на познати звуци (dB SPL), през 10 dB
+const NOISE_REFERENCES = [
+  { db: 0, icon: '🔇', name: 'Праг на чуваемост' },
+  { db: 10, icon: '🫁', name: 'Дишане' },
+  { db: 20, icon: '🍃', name: 'Шумолене на листа' },
+  { db: 30, icon: '🤫', name: 'Шепот' },
+  { db: 40, icon: '📚', name: 'Тиха библиотека' },
+  { db: 50, icon: '🌧️', name: 'Умерен дъжд, хладилник' },
+  { db: 60, icon: '💬', name: 'Нормален разговор' },
+  { db: 70, icon: '🧹', name: 'Прахосмукачка' },
+  { db: 80, icon: '🚗', name: 'Натоварен трафик' },
+  { db: 90, icon: '🚇', name: 'Метро, косачка' },
+  { db: 100, icon: '🏍️', name: 'Мотоциклет, бормашина' },
+  { db: 110, icon: '🎸', name: 'Рок концерт, клаксон' },
+  { db: 120, icon: '🚑', name: 'Сирена, гръмотевица' },
+  { db: 130, icon: '🔨', name: 'Къртач – праг на болка' },
+  { db: 140, icon: '✈️', name: 'Реактивен двигател' },
+];
+const noiseReference = (v) => NOISE_REFERENCES[Math.min(14, Math.max(0, Math.round(v / 10)))];
+
+// Шумова доза: при ниво L допустимото време е 8 ч / 2^((L − критерий) / обменен коеф.)
+const DOSE_STANDARDS = {
+  niosh: { label: 'NIOSH', criterion: 85, exchange: 3, threshold: 80 },
+  osha: { label: 'OSHA', criterion: 90, exchange: 5, threshold: 80 },
+};
+const WORK_DAY = 8 * 3600;
+const allowedSeconds = (L, std) => WORK_DAY / 2 ** ((L - std.criterion) / std.exchange);
+const twaFromDose = (dose, std) => (dose > 0 ? std.criterion + (std.exchange / Math.log10(2)) * Math.log10(dose / 100) : NaN);
+
+function fmtLongDuration(sec) {
+  if (!Number.isFinite(sec)) return '∞';
+  if (sec < 60) return `${Math.round(sec)} s`;
+  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+  return h ? `${h} ч ${m} мин` : `${m} мин`;
+}
+
 async function api(path, body, method) {
   const opts = {};
   if (body !== undefined || method) {

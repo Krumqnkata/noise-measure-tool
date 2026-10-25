@@ -52,12 +52,22 @@
         </div>
         <div class="flex flex-wrap gap-2 text-sm print:hidden">
           <button data-a="rename" class="rounded-lg bg-slate-800 px-3 py-2 ring-1 ring-slate-700 hover:bg-slate-700">Преименувай</button>
+          <button data-a="note" class="rounded-lg bg-slate-800 px-3 py-2 ring-1 ring-slate-700 hover:bg-slate-700">Бележка</button>
           <a data-a="csv" class="rounded-lg bg-slate-800 px-3 py-2 ring-1 ring-slate-700 hover:bg-slate-700">CSV</a>
           <button data-a="print" class="rounded-lg bg-slate-800 px-3 py-2 ring-1 ring-slate-700 hover:bg-slate-700">Печат</button>
           <button data-a="delete" class="rounded-lg bg-red-950/60 px-3 py-2 text-red-200 ring-1 ring-red-900 hover:bg-red-900/60">Изтрий</button>
         </div>
       </div>
+      <p data-f="note" class="mt-3 hidden whitespace-pre-line rounded-lg bg-slate-800/50 px-3 py-2 text-sm text-slate-300 print:bg-transparent print:px-0 print:text-black"></p>
       <div data-f="empty" class="mt-6 hidden text-slate-400">Още няма измервания в този запис.</div>
+      <div data-f="ref" class="mt-6 hidden items-center gap-3 rounded-xl bg-slate-800/50 p-3 ring-1 ring-slate-700/60 print:bg-transparent print:ring-slate-300">
+        <span data-f="ref-icon" class="text-4xl leading-none"></span>
+        <div>
+          <div class="text-xs uppercase tracking-wider text-slate-400">Средното ниво прилича на</div>
+          <div data-f="ref-name" class="font-semibold"></div>
+          <div data-f="loudest" class="text-sm text-slate-400"></div>
+        </div>
+      </div>
       <dl data-f="tiles" class="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-5"></dl>
       <p data-f="lowfreq" class="mt-4 hidden text-sm"></p>
     </section>
@@ -75,6 +85,11 @@
         <div class="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800 print:bg-white print:ring-slate-300">
           <h3 class="mb-3 text-sm font-semibold text-slate-300 print:text-black">Разпределение на LAeq <span class="font-normal text-slate-500">(% от времето)</span></h3>
           <canvas data-f="histogram" class="h-48"></canvas>
+        </div>
+        <div class="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800 md:col-span-2 print:bg-white print:ring-slate-300">
+          <h3 class="text-sm font-semibold text-slate-300 print:text-black">Шумова доза</h3>
+          <p class="mb-3 text-xs text-slate-500">Част от допустимото за 8-часов ден, изчислена от едносекундните LAeq (праг 80 dB).</p>
+          <div data-f="dose" class="grid gap-4 sm:grid-cols-2"></div>
         </div>
       </div>
     </section>
@@ -178,9 +193,15 @@ function renderReport() {
   f('meta').textContent = `${fmtDateTime(session.started_at)} – ${end} · ${fmtDuration(report.duration)}` +
     ` · офсет ${session.calibration_offset} dB` + (session.device ? ` · ${session.device}` : '');
 
+  if (session.note) {
+    f('note').textContent = session.note;
+    f('note').classList.remove('hidden');
+  }
+
   a('csv').href = `/api/sessions/${session.id}/csv`;
   a('print').addEventListener('click', () => window.print());
   a('rename').addEventListener('click', renameSession);
+  a('note').addEventListener('click', editNote);
   a('delete').addEventListener('click', deleteSession);
   if (report.active) a('delete').classList.add('hidden');
 
@@ -200,6 +221,33 @@ function renderReport() {
       tile('L90', summary.l90, 'Нивото, надвишено 90% от времето (фонов шум)'),
       tile('LZeq', summary.lzeq),
     );
+    const ref = noiseReference(summary.laeq);
+    f('ref').classList.remove('hidden');
+    f('ref').classList.add('flex');
+    f('ref-icon').textContent = ref.icon;
+    f('ref-name').textContent = `${ref.name} (около ${ref.db} dB)`;
+    f('loudest').textContent = `Най-шумно в ${fmtTime(summary.loudest_at)} – ${fmtDb(summary.lafmax)} dB`;
+
+    for (const [key, std] of Object.entries(DOSE_STANDARDS)) {
+      const d = report.dose[key];
+      const color = d.dose < 50 ? '#34d399' : d.dose < 100 ? '#fb923c' : '#f87171';
+      const el = document.createElement('div');
+      el.className = 'space-y-1.5';
+      el.innerHTML = `
+        <div class="text-sm font-medium"></div>
+        <div class="text-3xl font-semibold tabular-nums"></div>
+        <div class="h-2 overflow-hidden rounded-full bg-slate-800 print:bg-slate-200"><div class="h-full rounded-full"></div></div>
+        <div class="text-xs text-slate-400"></div>`;
+      el.children[0].textContent = `${std.label} · ${std.criterion} dB / ${std.exchange} dB`;
+      el.children[1].textContent = `${d.dose < 10 ? d.dose.toFixed(2) : d.dose.toFixed(1)}%`;
+      el.children[1].style.color = d.dose >= 50 ? color : '';
+      const bar = el.children[2].firstElementChild;
+      bar.style.width = `${Math.min(100, d.dose)}%`;
+      bar.style.background = color;
+      el.children[3].textContent = `TWA ${d.twa === null ? '--' : `${fmtDb(d.twa)} dB`} · прогноза за 8 ч ${d.projected.toFixed(0)}%`;
+      f('dose').appendChild(el);
+    }
+
     const diff = summary.lceq - summary.laeq;
     const lf = f('lowfreq');
     lf.classList.remove('hidden');
@@ -324,6 +372,17 @@ async function renameSession() {
   if (!name || !name.trim()) return;
   try {
     await api(`/api/sessions/${current}`, { name: name.trim() }, 'PATCH');
+    openSession(current);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+async function editNote() {
+  const note = prompt('Бележка към записа (място, източник на шума…):', report.session.note || '');
+  if (note === null) return;
+  try {
+    await api(`/api/sessions/${current}`, { note }, 'PATCH');
     openSession(current);
   } catch (e) {
     showError(e.message);

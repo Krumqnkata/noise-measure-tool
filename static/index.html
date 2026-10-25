@@ -11,6 +11,8 @@
     .spectrogram-scale { background: linear-gradient(to right, #000004, #420a68, #932667, #dd513a, #fca50a, #fcffa4); }
     .seg button { padding: 0.25rem 0.75rem; font-size: 0.875rem; border-radius: 0.375rem; color: #94a3b8; }
     .seg button[aria-pressed="true"] { background: #334155; color: #f1f5f9; }
+    #ref-marker { transition: top 150ms linear; }
+    #ref-dim { transition: height 150ms linear; }
   </style>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
@@ -27,12 +29,14 @@
           <a href="/sessions" class="rounded-md px-3 py-1.5 text-slate-400 hover:text-slate-100">Записи</a>
         </nav>
       </div>
-      <div class="flex items-center gap-3">
+      <div class="flex flex-wrap items-center gap-2">
         <div class="flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1.5 text-sm ring-1 ring-slate-800">
           <span id="conn-dot" class="h-2.5 w-2.5 rounded-full" style="background:#facc15"></span>
           <span id="conn-text">Свързване…</span>
         </div>
-        <button id="toggle" class="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium ring-1 ring-slate-700 transition hover:bg-slate-700 disabled:opacity-50">Старт</button>
+        <button id="big-open" title="Голям екран (F)" class="rounded-lg bg-slate-800 px-3 py-2 text-sm ring-1 ring-slate-700 transition hover:bg-slate-700">⛶ Голям екран</button>
+        <button id="snapshot" title="Запази картинка с текущото измерване" class="rounded-lg bg-slate-800 px-3 py-2 text-sm ring-1 ring-slate-700 transition hover:bg-slate-700">📷 Снимка</button>
+        <button id="toggle" title="Старт / стоп (интервал)" class="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium ring-1 ring-slate-700 transition hover:bg-slate-700 disabled:opacity-50">Старт</button>
       </div>
     </header>
 
@@ -42,9 +46,9 @@
     <div id="error" class="hidden rounded-xl bg-red-950/60 px-4 py-3 text-sm text-red-200 ring-1 ring-red-900"></div>
 
     <section class="grid gap-4 lg:grid-cols-3">
-      <!-- Текущо ниво и статистика -->
+      <!-- Уред: циферблат, „прилича на“ и статистика -->
       <div class="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800 sm:p-6 lg:col-span-2">
-        <div class="mb-4 flex flex-wrap items-center gap-3 text-sm text-slate-400">
+        <div class="flex flex-wrap items-center gap-3 text-sm text-slate-400">
           <span>Претегляне</span>
           <div id="seg-weighting" class="seg flex gap-1 rounded-lg bg-slate-800/60 p-1">
             <button data-value="A">A</button><button data-value="C">C</button><button data-value="Z">Z</button>
@@ -54,54 +58,84 @@
             <button data-value="F">Fast</button><button data-value="S">Slow</button>
           </div>
         </div>
-        <div class="flex flex-wrap items-end justify-between gap-6">
-          <div>
-            <div class="text-xs uppercase tracking-wider text-slate-400">Текущо ниво · <span id="metric-name">LAF</span></div>
-            <div class="flex items-baseline gap-2">
-              <span id="level" class="text-7xl font-bold leading-none tabular-nums sm:text-8xl">--</span>
-              <span id="level-unit" class="text-2xl text-slate-400">dB(A)</span>
-            </div>
-            <div id="level-label" class="mt-2 text-sm font-medium text-slate-400">Няма данни</div>
-          </div>
-          <dl class="grid min-w-[16rem] max-w-md flex-1 grid-cols-3 gap-4 text-sm">
-            <div>
-              <dt class="text-slate-400">LAF / LCF</dt>
-              <dd class="text-lg font-semibold tabular-nums"><span id="dba">--</span> <span class="text-slate-500">/</span> <span id="dbc">--</span></dd>
-            </div>
-            <div>
-              <dt class="text-slate-400">Пик (Z)</dt>
-              <dd class="text-lg font-semibold tabular-nums"><span id="peak-db">--</span> <span class="text-sm font-normal text-slate-500">dB</span></dd>
-            </div>
-            <div>
-              <dt class="text-slate-400">Пикова честота</dt>
-              <dd id="peak-freq" class="text-lg font-semibold tabular-nums">--</dd>
-            </div>
-          </dl>
-        </div>
 
-        <div class="mt-6 flex flex-wrap items-end justify-between gap-4 border-t border-slate-800 pt-4">
-          <dl class="grid min-w-[15rem] flex-1 grid-cols-3 gap-4 text-sm">
-            <div>
-              <dt class="text-slate-400">Мин</dt>
-              <dd id="stat-min" class="text-2xl font-semibold tabular-nums">--</dd>
+        <div class="mt-4 grid items-center gap-6 md:grid-cols-2">
+          <div class="relative mx-auto w-full max-w-[340px]">
+            <canvas id="gauge" class="aspect-square"></canvas>
+            <div class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+              <div id="metric-name" class="text-xs font-medium uppercase tracking-wider text-slate-400">LAF</div>
+              <div id="level" class="text-6xl font-bold leading-none tabular-nums sm:text-7xl">--</div>
+              <div id="level-unit" class="mt-1 text-lg text-slate-400">dB(A)</div>
+              <div id="level-label" class="mt-2 text-xs font-medium text-slate-500">Няма данни</div>
             </div>
-            <div>
-              <dt class="text-slate-400">Средно (Leq)</dt>
-              <dd id="stat-avg" class="text-2xl font-semibold tabular-nums">--</dd>
+          </div>
+
+          <div class="space-y-4">
+            <div class="flex items-center gap-4 rounded-xl bg-slate-800/50 p-4 ring-1 ring-slate-700/60">
+              <span id="ref-icon" class="text-5xl leading-none">🔇</span>
+              <div class="min-w-0">
+                <div class="text-xs uppercase tracking-wider text-slate-400">Прилича на</div>
+                <div id="ref-name" class="text-lg font-semibold">—</div>
+                <div id="ref-db" class="text-sm text-slate-400">около — dB</div>
+              </div>
             </div>
-            <div>
-              <dt class="text-slate-400">Макс</dt>
-              <dd id="stat-max" class="text-2xl font-semibold tabular-nums">--</dd>
+            <dl class="grid grid-cols-3 gap-x-4 gap-y-3 text-sm">
+              <div><dt class="text-slate-400">Мин</dt><dd id="stat-min" class="text-2xl font-semibold tabular-nums">--</dd></div>
+              <div><dt class="text-slate-400">Средно (Leq)</dt><dd id="stat-avg" class="text-2xl font-semibold tabular-nums">--</dd></div>
+              <div><dt class="text-slate-400">Макс</dt><dd id="stat-max" class="text-2xl font-semibold tabular-nums">--</dd></div>
+              <div><dt class="text-slate-400" title="Нивото, надвишено 10% от времето">L10</dt><dd id="stat-l10" class="text-lg font-semibold tabular-nums">--</dd></div>
+              <div><dt class="text-slate-400" title="Медиана">L50</dt><dd id="stat-l50" class="text-lg font-semibold tabular-nums">--</dd></div>
+              <div><dt class="text-slate-400" title="Фоновото ниво – надвишено 90% от времето">L90</dt><dd id="stat-l90" class="text-lg font-semibold tabular-nums">--</dd></div>
+              <div><dt class="text-slate-400">LAF / LCF</dt><dd class="font-semibold tabular-nums"><span id="dba">--</span> / <span id="dbc">--</span></dd></div>
+              <div><dt class="text-slate-400">Пик (Z)</dt><dd id="peak-db" class="font-semibold tabular-nums">--</dd></div>
+              <div><dt class="text-slate-400">Честота</dt><dd id="peak-freq" class="font-semibold tabular-nums">--</dd></div>
+            </dl>
+            <div class="flex items-center justify-between gap-3 border-t border-slate-800 pt-3">
+              <span class="text-sm text-slate-400">Сесия: <span id="session-time" class="tabular-nums">00:00</span></span>
+              <button id="reset" title="Нулиране (R)" class="rounded-lg bg-slate-800 px-3 py-2 text-sm ring-1 ring-slate-700 transition hover:bg-slate-700">Нулиране</button>
             </div>
-          </dl>
-          <div class="flex items-center gap-3">
-            <span class="text-sm text-slate-400">Сесия: <span id="session-time" class="tabular-nums">00:00</span></span>
-            <button id="reset" class="rounded-lg bg-slate-800 px-3 py-2 text-sm ring-1 ring-slate-700 transition hover:bg-slate-700">Нулиране</button>
           </div>
         </div>
       </div>
 
-      <!-- Настройки -->
+      <!-- Жива скала на шума -->
+      <div class="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800 sm:p-6">
+        <h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">Скала на шума</h2>
+        <div class="flex gap-3">
+          <div id="ref-bar" class="relative w-2.5 shrink-0 rounded-full">
+            <div id="ref-dim" class="absolute inset-x-0 top-0 rounded-t-full bg-slate-900/80" style="height:100%"></div>
+            <div id="ref-marker" class="absolute left-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-slate-950 shadow" style="top:100%"></div>
+          </div>
+          <ol id="ref-scale" class="min-w-0 flex-1 space-y-0.5"></ol>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid gap-4 lg:grid-cols-2">
+      <!-- Дозиметър -->
+      <div class="space-y-4 rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800 sm:p-6">
+        <div>
+          <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Дозиметър</h2>
+          <p class="text-xs text-slate-500">Каква част от допустимия дневен шум (8 ч) си „изразходвал“ от началото на сесията. По LAS.</p>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div data-std="niosh" class="space-y-1.5">
+            <div class="text-sm font-medium">NIOSH <span class="text-xs font-normal text-slate-500">85 dB · 3 dB</span></div>
+            <div data-f="dose" class="text-3xl font-semibold tabular-nums">0%</div>
+            <div class="h-2 overflow-hidden rounded-full bg-slate-800"><div data-f="bar" class="h-full rounded-full bg-emerald-400" style="width:0"></div></div>
+            <div class="text-xs text-slate-400">TWA <span data-f="twa" class="tabular-nums text-slate-200">--</span> · за 8 ч <span data-f="proj" class="tabular-nums text-slate-200">--</span></div>
+          </div>
+          <div data-std="osha" class="space-y-1.5">
+            <div class="text-sm font-medium">OSHA <span class="text-xs font-normal text-slate-500">90 dB · 5 dB</span></div>
+            <div data-f="dose" class="text-3xl font-semibold tabular-nums">0%</div>
+            <div class="h-2 overflow-hidden rounded-full bg-slate-800"><div data-f="bar" class="h-full rounded-full bg-emerald-400" style="width:0"></div></div>
+            <div class="text-xs text-slate-400">TWA <span data-f="twa" class="tabular-nums text-slate-200">--</span> · за 8 ч <span data-f="proj" class="tabular-nums text-slate-200">--</span></div>
+          </div>
+        </div>
+        <p id="safe-time" class="rounded-lg bg-slate-800/50 px-3 py-2 text-sm text-slate-300">—</p>
+      </div>
+
+      <!-- Настройки и калибриране -->
       <div class="space-y-4 rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800 sm:p-6">
         <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Настройки</h2>
         <label class="block space-y-1.5">
@@ -111,25 +145,21 @@
         <div class="space-y-1.5">
           <label for="offset" class="text-sm text-slate-300">Калибрационен офсет (dB)</label>
           <div class="flex gap-2">
-            <input id="offset" type="number" step="0.5" value="0" class="w-full min-w-0 rounded-lg bg-slate-800 px-3 py-2 text-sm tabular-nums ring-1 ring-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500">
+            <input id="offset" type="number" step="0.5" class="w-full min-w-0 rounded-lg bg-slate-800 px-3 py-2 text-sm tabular-nums ring-1 ring-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500">
             <button id="offset-apply" class="shrink-0 rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium transition hover:bg-sky-500">Приложи</button>
+            <button id="offset-default" class="shrink-0 rounded-lg bg-slate-800 px-3 py-2 text-sm ring-1 ring-slate-700 transition hover:bg-slate-700">Типичен</button>
           </div>
-          <p class="text-xs leading-relaxed text-slate-500">
-            Добавя се към всички нива, за да показват приблизително dB SPL. Без калибриране
-            стойностите са в dBFS (спрямо пълната скала на микрофона) и са отрицателни.
-            Сравни с еталонен шумомер и въведи разликата.
-          </p>
         </div>
-        <div class="grid grid-cols-2 gap-2 text-xs text-slate-400">
-          <div class="flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full" style="background:#4ade80"></span>&lt; 60 тихо</div>
-          <div class="flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full" style="background:#facc15"></span>60–80 умерено</div>
-          <div class="flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full" style="background:#fb923c"></span>80–90 шумно</div>
-          <div class="flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full" style="background:#f87171"></span>&gt; 90 опасно</div>
+        <div class="space-y-1.5 rounded-xl bg-slate-800/40 p-3 ring-1 ring-slate-700/60">
+          <label for="ref-level" class="text-sm text-slate-300">Калибриране по еталон</label>
+          <p class="text-xs text-slate-500">Сложи истински шумомер до микрофона, пусни постоянен шум и въведи какво показва той (в избраното претегляне). Офсетът се изчислява от последните 3 секунди.</p>
+          <div class="flex gap-2">
+            <input id="ref-level" type="number" step="0.1" placeholder="напр. 72.5" class="w-full min-w-0 rounded-lg bg-slate-800 px-3 py-2 text-sm tabular-nums ring-1 ring-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500">
+            <button id="calibrate" class="shrink-0 rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium transition hover:bg-sky-500">Калибрирай</button>
+          </div>
         </div>
       </div>
-    </section>
 
-    <section class="grid gap-4 lg:grid-cols-2">
       <!-- Запис в базата -->
       <div class="space-y-3 rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800 sm:p-6">
         <div class="flex items-center justify-between gap-2">
@@ -150,7 +180,7 @@
         </div>
         <p class="text-xs leading-relaxed text-slate-500">
           Всяка секунда се пазят LAeq, LAFmax/min, LCeq, LZeq и пик в <code>noise.db</code>.
-          В „Записи“ има отчет (L10/L50/L90, време над праг, хистограма) и CSV експорт.
+          В „Записи“ има отчет (L10/L50/L90, доза, време над праг, хистограма), бележки и CSV експорт.
         </p>
       </div>
 
@@ -195,7 +225,10 @@
         <canvas id="waveform" class="h-48 sm:h-56"></canvas>
       </div>
       <div class="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800">
-        <h2 class="mb-3 text-sm font-semibold text-slate-300">Спектър <span class="font-normal text-slate-500">(dBFS)</span></h2>
+        <div class="mb-3 flex items-center justify-between gap-2">
+          <h2 class="text-sm font-semibold text-slate-300">Спектър <span class="font-normal text-slate-500">(dB)</span></h2>
+          <label class="flex items-center gap-2 text-xs text-slate-400"><input id="spec-hold" type="checkbox" class="h-3.5 w-3.5 accent-amber-400"> Задръж максимума</label>
+        </div>
         <canvas id="spectrum" class="h-48 sm:h-56"></canvas>
       </div>
     </section>
@@ -209,7 +242,7 @@
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 class="text-sm font-semibold text-slate-300">Спектрограма <span class="font-normal text-slate-500">(последните ~30 s)</span></h2>
         <div class="flex items-center gap-2 text-xs text-slate-500">
-          <span>−110 dB</span><span class="spectrogram-scale h-2 w-24 rounded"></span><span>−20 dB</span>
+          <span id="sg-lo">10 dB</span><span class="spectrogram-scale h-2 w-24 rounded"></span><span id="sg-hi">100 dB</span>
         </div>
       </div>
       <div class="flex gap-2">
@@ -217,6 +250,24 @@
         <canvas id="spectrogram" class="h-56 min-w-0 flex-1 rounded sm:h-64"></canvas>
       </div>
     </section>
+
+    <p class="pb-2 text-center text-xs text-slate-600">
+      Клавиши: <kbd>Интервал</kbd> старт/стоп · <kbd>F</kbd> голям екран · <kbd>R</kbd> нулиране · <kbd>S</kbd> снимка
+    </p>
+  </div>
+
+  <!-- Голям екран -->
+  <div id="big" class="fixed inset-0 z-50 hidden flex-col items-center justify-center bg-slate-950 p-6 text-center">
+    <button id="big-close" class="absolute right-4 top-4 rounded-lg bg-slate-800 px-3 py-2 text-sm ring-1 ring-slate-700 hover:bg-slate-700">✕ Затвори</button>
+    <div id="big-metric" class="text-xl font-medium uppercase tracking-widest text-slate-400">LAF</div>
+    <div id="big-level" class="font-bold leading-none tabular-nums" style="font-size:min(30vw, 42vh)">--</div>
+    <div id="big-unit" class="text-3xl text-slate-400">dB(A)</div>
+    <div id="big-ref" class="mt-6 text-2xl text-slate-200 sm:text-3xl">—</div>
+    <div class="mt-8 flex gap-8 text-lg text-slate-400 sm:gap-12 sm:text-2xl">
+      <div>Мин <span id="big-min" class="font-semibold tabular-nums text-slate-100">--</span></div>
+      <div>Leq <span id="big-avg" class="font-semibold tabular-nums text-slate-100">--</span></div>
+      <div>Макс <span id="big-max" class="font-semibold tabular-nums text-slate-100">--</span></div>
+    </div>
   </div>
 
 <script>
@@ -232,12 +283,16 @@ let latest = null;
 let dirty = true;
 let demoMode = false;
 let calOffset = 0;
+let defaultCalibration = 120;
 let weighting = store.get('weighting', 'A');
 let timeWeighting = store.get('timeWeighting', 'F');
 const history = [];
-const session = { min: Infinity, max: -Infinity, energy: 0, n: 0, start: Date.now() };
+// Статистика за сесията; samples се взимат 4 пъти в секунда за L10/L50/L90
+const stats = { min: Infinity, max: -Infinity, energy: 0, n: 0, start: Date.now(), samples: [], frame: 0 };
+const dose = { niosh: 0, osha: 0, elapsed: 0, lastT: null };
 
 const markDirty = () => { dirty = true; };
+const gaugeCv = setupCanvas($('gauge'), markDirty);
 const historyCv = setupCanvas($('history'), markDirty);
 const waveCv = setupCanvas($('waveform'), markDirty);
 const specCv = setupCanvas($('spectrum'), markDirty);
@@ -245,6 +300,7 @@ const octCv = setupCanvas($('octaves'), markDirty);
 
 const currentLevel = (m) => m.levels[weighting][timeWeighting];
 const metricName = () => `L${weighting}${timeWeighting}`;
+const unitName = () => (weighting === 'Z' ? 'dB' : `dB(${weighting})`);
 
 // ---------- избор на претегляне ----------
 
@@ -264,14 +320,115 @@ setupSegment('seg-weighting', () => weighting, (v) => { weighting = v; store.set
 setupSegment('seg-time', () => timeWeighting, (v) => { timeWeighting = v; store.set('timeWeighting', v); });
 
 function onMetricChange() {
-  $('metric-name').textContent = metricName();
-  $('history-title').textContent = metricName();
-  $('level-unit').textContent = weighting === 'Z' ? 'dB' : `dB(${weighting})`;
+  for (const id of ['metric-name', 'history-title', 'big-metric']) $(id).textContent = metricName();
+  $('level-unit').textContent = unitName();
+  $('big-unit').textContent = unitName();
   history.length = 0;   // смесени величини в една графика нямат смисъл
-  resetSession();
+  resetStats();
   dirty = true;
 }
-onMetricChange();
+
+// ---------- циферблат ----------
+
+const G_MIN = 0, G_MAX = 140;
+const G_START = Math.PI * 0.75, G_SWEEP = Math.PI * 1.5;   // 270°, отворен отдолу
+const gaugeAngle = (v) => G_START + G_SWEEP * Math.min(1, Math.max(0, (v - G_MIN) / (G_MAX - G_MIN)));
+let gaugeValue = 0, gaugeTarget = 0;
+
+function drawGauge() {
+  const { ctx, w, h } = gaugeCv;
+  ctx.clearRect(0, 0, w, h);
+  const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 12;
+  const band = Math.max(10, r * 0.11);
+  const polar = (a, rr) => [cx + Math.cos(a) * rr, cy + Math.sin(a) * rr];
+
+  ctx.lineCap = 'butt';
+  ctx.lineWidth = band; ctx.strokeStyle = '#1e293b';
+  ctx.beginPath(); ctx.arc(cx, cy, r - band / 2, G_START, G_START + G_SWEEP); ctx.stroke();
+
+  // Тънък външен пръстен с цветните зони
+  ctx.lineWidth = 4;
+  for (const [a, b, c] of [[0, 60, '#4ade80'], [60, 80, '#facc15'], [80, 90, '#fb923c'], [90, 140, '#f87171']]) {
+    ctx.strokeStyle = c;
+    ctx.beginPath(); ctx.arc(cx, cy, r + 5, gaugeAngle(a), gaugeAngle(b)); ctx.stroke();
+  }
+
+  if (latest) {
+    ctx.lineWidth = band; ctx.lineCap = 'round'; ctx.strokeStyle = levelColor(gaugeValue);
+    ctx.beginPath(); ctx.arc(cx, cy, r - band / 2, G_START, gaugeAngle(gaugeValue)); ctx.stroke();
+  }
+
+  ctx.lineCap = 'butt';
+  ctx.font = FONT; ctx.fillStyle = LABEL; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (let v = G_MIN; v <= G_MAX; v += 10) {
+    const a = gaugeAngle(v), major = v % 20 === 0;
+    const r1 = r - band - 4, r2 = r1 - (major ? 8 : 4);
+    ctx.strokeStyle = major ? 'rgba(148, 163, 184, 0.6)' : 'rgba(148, 163, 184, 0.3)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(...polar(a, r1)); ctx.lineTo(...polar(a, r2)); ctx.stroke();
+    if (major) ctx.fillText(v, ...polar(a, r2 - 12));
+  }
+
+  // Бяла чертичка – максимумът за сесията
+  if (Number.isFinite(stats.max)) {
+    const a = gaugeAngle(stats.max);
+    ctx.strokeStyle = '#f1f5f9'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(...polar(a, r - band - 1)); ctx.lineTo(...polar(a, r + 8)); ctx.stroke();
+  }
+}
+
+// ---------- жива скала на шума ----------
+// Редовете са от 140 dB горе до 0 dB долу; маркерът се движи плавно между тях.
+
+const REF_ROWS = NOISE_REFERENCES.length;
+const refTop = (v) => ((G_MAX - Math.min(G_MAX, Math.max(G_MIN, v))) / 10 + 0.5) / REF_ROWS * 100;
+let refRow = null;
+
+(function buildRefScale() {
+  const ol = $('ref-scale');
+  for (const ref of [...NOISE_REFERENCES].reverse()) {
+    const li = document.createElement('li');
+    li.dataset.db = ref.db;
+    li.className = 'flex items-center gap-2 rounded-lg px-2 py-1 transition-colors';
+    li.innerHTML = '<span class="w-7 shrink-0 text-right text-xs tabular-nums text-slate-500"></span>' +
+      '<span class="w-6 shrink-0 text-center text-base leading-none"></span>' +
+      '<span class="min-w-0 flex-1 truncate text-sm text-slate-300"></span>' +
+      '<span class="hidden shrink-0 rounded-md px-1.5 py-0.5 text-xs font-bold tabular-nums text-slate-950"></span>';
+    li.children[0].textContent = ref.db;
+    li.children[1].textContent = ref.icon;
+    li.children[2].textContent = ref.name;
+    ol.appendChild(li);
+  }
+  // Цветовете на лентата отговарят на праговете 60/80/90 по позициите на редовете
+  const p = (v) => `${refTop(v + 5)}%`;   // границата е между два реда
+  $('ref-bar').style.background = `linear-gradient(to bottom, #f87171 0%, #f87171 ${p(85)}, #fb923c ${p(85)},
+    #fb923c ${p(75)}, #facc15 ${p(75)}, #facc15 ${p(55)}, #4ade80 ${p(55)}, #4ade80 100%)`;
+})();
+
+function updateRefScale(v) {
+  const top = refTop(v);
+  $('ref-marker').style.top = `${top}%`;
+  $('ref-dim').style.height = `${top}%`;
+  const ref = noiseReference(v);
+  const color = levelColor(v);
+  if (refRow?.dataset.db !== String(ref.db)) {
+    if (refRow) {
+      refRow.style.background = '';
+      refRow.children[3].classList.add('hidden');
+      refRow.children[2].classList.remove('font-semibold', 'text-white');
+    }
+    refRow = $('ref-scale').querySelector(`[data-db="${ref.db}"]`);
+    refRow.children[3].classList.remove('hidden');
+    refRow.children[2].classList.add('font-semibold', 'text-white');
+  }
+  refRow.style.background = color + '26';
+  refRow.children[3].style.background = color;
+  refRow.children[3].textContent = v.toFixed(0);
+
+  $('ref-icon').textContent = ref.icon;
+  $('ref-name').textContent = ref.name;
+  $('ref-db').textContent = `около ${ref.db} dB`;
+}
 
 // ---------- графика на историята ----------
 
@@ -315,7 +472,7 @@ function drawWaveform() {
   // Автоматичен мащаб: бързо нагоре, плавно надолу, за да не „скача“ картината
   let peak = 0;
   for (const v of data) peak = Math.max(peak, Math.abs(v));
-  const target = Math.max(peak, 0.01);
+  const target = Math.max(peak, 1e-4);
   waveScale = target > waveScale ? target : waveScale * 0.95 + target * 0.05;
 
   ctx.beginPath();
@@ -328,14 +485,17 @@ function drawWaveform() {
   ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 1.5; ctx.stroke();
 
   ctx.font = FONT; ctx.fillStyle = LABEL; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
-  ctx.fillText(`мащаб ±${waveScale.toFixed(3)}`, w - 4, 4);
+  ctx.fillText(`мащаб ×${(1 / waveScale).toFixed(0)}`, w - 4, 4);
 }
 
 // ---------- спектър ----------
+// Данните идват в dBFS; етикетите показват калибрираните стойности.
 
 const SPEC_MIN = -120, SPEC_MAX = 0;
 const GRID_FREQS = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
 const LABEL_FREQS = [100, 1000, 10000];
+let maxHold = null;
+$('spec-hold').addEventListener('change', () => { maxHold = null; dirty = true; });
 
 function drawSpectrum() {
   const { ctx, w, h } = specCv;
@@ -349,7 +509,7 @@ function drawSpectrum() {
   for (let v = SPEC_MIN; v <= SPEC_MAX; v += 20) {
     ctx.strokeStyle = GRID;
     ctx.beginPath(); ctx.moveTo(L, y(v)); ctx.lineTo(w - R, y(v)); ctx.stroke();
-    ctx.fillStyle = LABEL; ctx.fillText(v, L - 6, y(v));
+    ctx.fillStyle = LABEL; ctx.fillText(Math.round(v + calOffset), L - 6, y(v));
   }
   ctx.textAlign = 'center'; ctx.textBaseline = 'top';
   for (const f of GRID_FREQS) {
@@ -364,21 +524,27 @@ function drawSpectrum() {
   if (!bands) return;
   // Лентите са равномерни по логаритмичната ос, затова всяка заема еднаква ширина
   const n = bands.length;
+  const bx = (i) => L + pw * ((i + 0.5) / n);
+  const path = (values) => {
+    ctx.beginPath();
+    values.forEach((v, i) => (i ? ctx.lineTo(bx(i), y(v)) : ctx.moveTo(bx(i), y(v))));
+  };
   ctx.beginPath();
   ctx.moveTo(L, T + ph);
-  bands.forEach((v, i) => ctx.lineTo(L + pw * ((i + 0.5) / n), y(v)));
+  bands.forEach((v, i) => ctx.lineTo(bx(i), y(v)));
   ctx.lineTo(L + pw, T + ph);
   ctx.closePath();
   const grad = ctx.createLinearGradient(0, T, 0, T + ph);
   grad.addColorStop(0, 'rgba(56, 189, 248, 0.55)');
   grad.addColorStop(1, 'rgba(56, 189, 248, 0.03)');
   ctx.fillStyle = grad; ctx.fill();
-  ctx.beginPath();
-  bands.forEach((v, i) => {
-    const xx = L + pw * ((i + 0.5) / n);
-    i ? ctx.lineTo(xx, y(v)) : ctx.moveTo(xx, y(v));
-  });
+  path(bands);
   ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 1.5; ctx.stroke();
+
+  if (maxHold) {
+    path(maxHold);
+    ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 1; ctx.stroke();
+  }
 }
 
 // ---------- третинооктавни ленти ----------
@@ -393,7 +559,7 @@ function drawOctaves() {
 
   ctx.font = FONT; ctx.lineWidth = 1;
   ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-  for (let v = lo; v <= hi; v += 20) {
+  for (let v = hi; v >= lo; v -= 20) {
     ctx.strokeStyle = GRID;
     ctx.beginPath(); ctx.moveTo(box.L, y(v)); ctx.lineTo(box.L + box.pw, y(v)); ctx.stroke();
     ctx.fillStyle = LABEL; ctx.fillText(v, box.L - 6, y(v));
@@ -468,6 +634,12 @@ for (const f of LABEL_FREQS) {
 
 // ---------- данни ----------
 
+function percentile(sorted, p) {
+  if (!sorted.length) return NaN;
+  const i = (sorted.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+}
+
 function onData(m) {
   latest = m;
   dirty = true;
@@ -476,12 +648,29 @@ function onData(m) {
   history.push({ t: now, v });
   while (history.length && history[0].t < now - HISTORY_MS) history.shift();
 
-  session.min = Math.min(session.min, v);
-  session.max = Math.max(session.max, v);
+  stats.min = Math.min(stats.min, v);
+  stats.max = Math.max(stats.max, v);
   // Средното на децибели се смята енергийно (Leq), не аритметично
-  session.energy += 10 ** (v / 10);
-  session.n++;
+  stats.energy += 10 ** (v / 10);
+  stats.n++;
+  if (stats.frame++ % 5 === 0) stats.samples.push(v);
 
+  // Дозата се трупа по LAS независимо от избраното претегляне
+  if (dose.lastT !== null) {
+    const dt = Math.min(0.5, (now - dose.lastT) / 1000);
+    const las = m.levels.A.S;
+    for (const [key, std] of Object.entries(DOSE_STANDARDS)) {
+      if (las >= std.threshold) dose[key] += (100 * dt) / allowedSeconds(las, std);
+    }
+    dose.elapsed += dt;
+  }
+  dose.lastT = now;
+
+  if ($('spec-hold').checked) {
+    maxHold = maxHold ? maxHold.map((x, i) => Math.max(x, m.spectrum[i])) : [...m.spectrum];
+  }
+
+  gaugeTarget = v;
   pushSpectrogram(m.spectrum);
   updateReadout();
 }
@@ -498,26 +687,85 @@ function updateReadout() {
   $('dbc').textContent = fmtDb(m.dbc);
   $('peak-db').textContent = fmtDb(m.peak_db);
   $('peak-freq').textContent = fmtFreq(m.peak_freq);
+  updateRefScale(v);
 
-  for (const [id, val] of [['stat-min', session.min], ['stat-max', session.max]]) {
+  const leq = stats.n ? 10 * Math.log10(stats.energy / stats.n) : NaN;
+  for (const [id, val] of [['stat-min', stats.min], ['stat-avg', leq], ['stat-max', stats.max]]) {
     $(id).textContent = fmtDb(val);
     $(id).style.color = levelColor(val);
   }
-  const leq = session.n ? 10 * Math.log10(session.energy / session.n) : NaN;
-  $('stat-avg').textContent = fmtDb(leq);
-  $('stat-avg').style.color = levelColor(leq);
+  updateDose(m.levels.A.S);
+
+  if (!$('big').classList.contains('hidden')) {
+    const ref = noiseReference(v);
+    $('big-level').textContent = v.toFixed(1);
+    $('big-level').style.color = info.color;
+    $('big-ref').textContent = `${ref.icon} ${ref.name}`;
+    $('big-min').textContent = fmtDb(stats.min);
+    $('big-avg').textContent = fmtDb(leq);
+    $('big-max').textContent = fmtDb(stats.max);
+  }
 }
 
-function resetSession() {
-  Object.assign(session, { min: Infinity, max: -Infinity, energy: 0, n: 0, start: Date.now() });
-  for (const id of ['stat-min', 'stat-avg', 'stat-max']) { $(id).textContent = '--'; $(id).style.color = ''; }
+// Процентилите изискват сортиране, затова ги смятаме веднъж на 2 секунди
+setInterval(() => {
+  const sorted = [...stats.samples].sort((a, b) => a - b);
+  for (const [id, p] of [['stat-l10', 0.9], ['stat-l50', 0.5], ['stat-l90', 0.1]]) {
+    const val = percentile(sorted, p);
+    $(id).textContent = fmtDb(val);
+    $(id).style.color = levelColor(val);
+  }
+}, 2000);
+
+function updateDose(las) {
+  for (const [key, std] of Object.entries(DOSE_STANDARDS)) {
+    const root = document.querySelector(`[data-std="${key}"]`);
+    const f = (name) => root.querySelector(`[data-f="${name}"]`);
+    const d = dose[key];
+    const color = d < 50 ? '#34d399' : d < 100 ? '#fb923c' : '#f87171';
+    f('dose').textContent = `${d < 10 ? d.toFixed(2) : d.toFixed(1)}%`;
+    f('dose').style.color = d >= 50 ? color : '';
+    f('bar').style.width = `${Math.min(100, d)}%`;
+    f('bar').style.background = color;
+    f('twa').textContent = d > 0 ? `${fmtDb(twaFromDose(d, std))} dB` : '--';
+    f('proj').textContent = dose.elapsed > 10 ? `${((d * WORK_DAY) / dose.elapsed).toFixed(0)}%` : '--';
+  }
+
+  const std = DOSE_STANDARDS.niosh;
+  const el = $('safe-time');
+  if (dose.niosh >= 100) {
+    el.textContent = '⚠ Дневната доза по NIOSH е надвишена – ползвай защита за слуха или намали шума.';
+    el.style.color = '#fca5a5';
+  } else if (las < std.threshold) {
+    el.textContent = `✓ При ${las.toFixed(0)} dB(A) няма ограничение във времето (под ${std.threshold} dB).`;
+    el.style.color = '';
+  } else {
+    const remaining = (1 - dose.niosh / 100) * allowedSeconds(las, std);
+    el.textContent = `При ${las.toFixed(0)} dB(A) безопасно още около ${fmtLongDuration(remaining)} (по NIOSH).`;
+    el.style.color = las >= 95 ? '#fca5a5' : '#fde68a';
+  }
+}
+
+function resetStats() {
+  Object.assign(stats, { min: Infinity, max: -Infinity, energy: 0, n: 0, start: Date.now(), samples: [], frame: 0 });
+  for (const id of ['stat-min', 'stat-avg', 'stat-max', 'stat-l10', 'stat-l50', 'stat-l90']) {
+    $(id).textContent = '--'; $(id).style.color = '';
+  }
   $('session-time').textContent = '00:00';
+  dirty = true;
+}
+
+function resetAll() {
+  resetStats();
+  Object.assign(dose, { niosh: 0, osha: 0, elapsed: 0, lastT: null });
+  maxHold = null;
+  history.length = 0;
 }
 
 let recording = null;
 
 setInterval(() => {
-  $('session-time').textContent = fmtDuration((Date.now() - session.start) / 1000);
+  $('session-time').textContent = fmtDuration((Date.now() - stats.start) / 1000);
   if (recording) $('rec-time').textContent = fmtDuration(Date.now() / 1000 - recording.started_at);
 }, 1000);
 
@@ -528,13 +776,20 @@ let running = false;
 function onStatus(s) {
   running = s.running;
   demoMode = s.demo;
-  if (calOffset !== s.calibration_offset) { calOffset = s.calibration_offset; dirty = true; }
+  defaultCalibration = s.default_calibration;
+  if (calOffset !== s.calibration_offset) {
+    calOffset = s.calibration_offset;
+    $('sg-lo').textContent = `${Math.round(SG_MIN + calOffset)} dB`;
+    $('sg-hi').textContent = `${Math.round(SG_MAX + calOffset)} dB`;
+    dirty = true;
+  }
   const btn = $('toggle');
   btn.textContent = running ? 'Стоп' : 'Старт';
   btn.className = 'rounded-lg px-4 py-2 text-sm font-medium ring-1 transition disabled:opacity-50 ' +
     (running ? 'bg-red-600/90 ring-red-500 hover:bg-red-500' : 'bg-emerald-600 ring-emerald-500 hover:bg-emerald-500');
   $('mode-label').textContent = s.demo ? 'Демо режим – симулиран сигнал' : 'Измерване на шум в реално време';
   if (document.activeElement !== $('offset')) $('offset').value = s.calibration_offset;
+  $('offset-default').textContent = `Типичен (${defaultCalibration})`;
   const sel = $('device');
   sel.disabled = s.demo;
   if (!s.demo) sel.value = s.device === null ? '' : String(s.device);
@@ -581,16 +836,19 @@ async function action(fn) {
     const res = await fn();
     if (res?.type === 'status') onStatus(res);
     showError('');
+    return true;
   } catch (e) {
     showError(e.message);
+    return false;
   }
 }
 
-$('toggle').addEventListener('click', async () => {
+async function toggleRunning() {
   $('toggle').disabled = true;
   await action(() => api(running ? '/api/stop' : '/api/start', {}));
   $('toggle').disabled = false;
-});
+}
+$('toggle').addEventListener('click', toggleRunning);
 
 $('device').addEventListener('change', async (e) => {
   const v = e.target.value;
@@ -598,16 +856,27 @@ $('device').addEventListener('change', async (e) => {
   onStatus(await api('/api/status'));
 });
 
-async function applyOffset() {
-  const v = parseFloat($('offset').value);
+async function setOffset(v) {
   if (!Number.isFinite(v)) { showError('Въведи число за офсета'); return; }
-  await action(() => api('/api/calibration', { offset: v }));
-  resetSession();   // старите стойности са с друг офсет
-  history.length = 0;
+  if (await action(() => api('/api/calibration', { offset: v }))) resetAll();   // старите стойности са с друг офсет
 }
-$('offset-apply').addEventListener('click', applyOffset);
-$('offset').addEventListener('keydown', (e) => { if (e.key === 'Enter') applyOffset(); });
-$('reset').addEventListener('click', resetSession);
+$('offset-apply').addEventListener('click', () => setOffset(parseFloat($('offset').value)));
+$('offset').addEventListener('keydown', (e) => { if (e.key === 'Enter') setOffset(parseFloat($('offset').value)); });
+$('offset-default').addEventListener('click', () => setOffset(defaultCalibration));
+
+// Калибриране по еталон: разликата между еталона и енергийното средно за последните 3 s
+$('calibrate').addEventListener('click', () => {
+  const ref = parseFloat($('ref-level').value);
+  if (!Number.isFinite(ref)) { showError('Въведи какво показва еталонният шумомер'); return; }
+  const now = performance.now();
+  const recent = history.filter((p) => p.t >= now - 3000).map((p) => p.v);
+  if (recent.length < 10) { showError('Няма достатъчно данни – пусни измерването и изчакай няколко секунди'); return; }
+  const avg = 10 * Math.log10(recent.reduce((s, v) => s + 10 ** (v / 10), 0) / recent.length);
+  setOffset(Math.round((calOffset + ref - avg) * 10) / 10);
+  $('ref-level').value = '';
+});
+
+$('reset').addEventListener('click', resetAll);
 
 $('rec-start').addEventListener('click', () => action(async () => {
   const res = await api('/api/recording/start', { name: $('rec-name').value });
@@ -689,13 +958,114 @@ async function loadEvents() {
       const li = document.createElement('li');
       li.className = 'flex justify-between gap-2 py-1.5';
       const dur = e.ended_at ? fmtDuration(e.ended_at - e.started_at) : 'продължава';
-      li.innerHTML = `<span class="text-slate-300"></span><span class="tabular-nums text-slate-400"></span>`;
+      li.innerHTML = '<span class="text-slate-300"></span><span class="tabular-nums text-slate-400"></span>';
       li.children[0].textContent = fmtDateTime(e.started_at);
       li.children[1].textContent = `макс. ${fmtDb(e.max_level)} dB · ${dur}`;
       ul.appendChild(li);
     }
   } catch { /* не е критично */ }
 }
+
+// ---------- голям екран ----------
+
+function openBig() {
+  $('big').classList.remove('hidden');
+  $('big').classList.add('flex');
+  $('big').requestFullscreen?.().catch(() => {});
+  if (latest) updateReadout();
+}
+function closeBig() {
+  $('big').classList.add('hidden');
+  $('big').classList.remove('flex');
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+}
+$('big-open').addEventListener('click', openBig);
+$('big-close').addEventListener('click', closeBig);
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) closeBig(); });
+
+// ---------- снимка (PNG) ----------
+
+function snapshot() {
+  if (!latest) { showError('Още няма измерване'); return; }
+  const W = 1200, H = 630;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  const v = currentLevel(latest);
+  const ref = noiseReference(v);
+  const color = levelColor(v);
+  const font = (size, weight = 400) => `${weight} ${size}px ui-sans-serif, system-ui, "Segoe UI", sans-serif`;
+  const leq = stats.n ? 10 * Math.log10(stats.energy / stats.n) : NaN;
+
+  ctx.fillStyle = '#020617'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = color; ctx.fillRect(0, 0, W, 10);
+
+  ctx.fillStyle = '#94a3b8'; ctx.font = font(28, 600); ctx.textBaseline = 'top';
+  ctx.fillText('Шумомер', 60, 50);
+  ctx.textAlign = 'right'; ctx.font = font(24);
+  ctx.fillText(new Date().toLocaleString('bg-BG'), W - 60, 54);
+
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = color; ctx.font = font(220, 700);
+  const num = v.toFixed(1);
+  ctx.fillText(num, 52, 330);
+  const numW = ctx.measureText(num).width;
+  ctx.fillStyle = '#94a3b8'; ctx.font = font(48);
+  ctx.fillText(unitName(), 72 + numW, 330);
+  ctx.font = font(26, 600);
+  ctx.fillText(metricName(), 72 + numW, 260);
+
+  ctx.fillStyle = '#e2e8f0'; ctx.font = font(44);
+  ctx.fillText(`${ref.icon}  ${ref.name}`, 60, 420);
+
+  ctx.font = font(30); ctx.fillStyle = '#94a3b8';
+  const cells = [['Мин', stats.min], ['Leq', leq], ['Макс', stats.max], ['Пик', latest.peak_db]];
+  cells.forEach(([label, val], i) => {
+    const x = 60 + i * 270;
+    ctx.fillStyle = '#94a3b8'; ctx.font = font(26); ctx.fillText(label, x, 500);
+    ctx.fillStyle = levelColor(val) || '#e2e8f0'; ctx.font = font(44, 700); ctx.fillText(fmtDb(val), x, 552);
+  });
+
+  // Малка графика на последната минута вдясно горе
+  if (history.length > 1) {
+    const bx = 760, by = 120, bw = 380, bh = 220;
+    const { lo, hi } = levelRange(history.map((p) => p.v));
+    const t0 = history[0].t, t1 = history[history.length - 1].t || t0 + 1;
+    ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, bh);
+    ctx.beginPath();
+    history.forEach((p, i) => {
+      const x = bx + bw * ((p.t - t0) / Math.max(1, t1 - t0));
+      const y = by + bh * (1 - (p.v - lo) / (hi - lo));
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.fillStyle = '#64748b'; ctx.font = font(20); ctx.textAlign = 'right';
+    ctx.fillText('последната минута', bx + bw, by + bh + 30);
+  }
+
+  c.toBlob((blob) => {
+    const a = document.createElement('a');
+    const d = new Date(), p = (x) => String(x).padStart(2, '0');
+    const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+    a.href = URL.createObjectURL(blob);
+    a.download = `noise-${stamp}.png`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+}
+$('snapshot').addEventListener('click', snapshot);
+
+// ---------- клавиши ----------
+
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(e.target.tagName)) return;
+  const key = e.key.toLowerCase();
+  if (e.key === ' ') { e.preventDefault(); toggleRunning(); }
+  else if (key === 'f' || key === 'ф') { $('big').classList.contains('hidden') ? openBig() : closeBig(); }
+  else if (key === 'r' || key === 'р') resetAll();
+  else if (key === 's' || key === 'с') snapshot();
+  else if (e.key === 'Escape') closeBig();
+});
 
 // ---------- WebSocket с автоматично повторно свързване ----------
 
@@ -731,6 +1101,11 @@ function connect() {
 }
 
 function frame() {
+  // Стрелката на циферблата се движи плавно към новата стойност
+  const diff = gaugeTarget - gaugeValue;
+  const gaugeMoving = Math.abs(diff) > 0.05;
+  if (gaugeMoving) gaugeValue += diff * 0.25;
+  if (dirty || gaugeMoving) drawGauge();
   if (dirty) {
     dirty = false;
     drawHistory();
@@ -741,6 +1116,7 @@ function frame() {
   requestAnimationFrame(frame);
 }
 
+onMetricChange();
 connect();
 requestAnimationFrame(frame);
 </script>

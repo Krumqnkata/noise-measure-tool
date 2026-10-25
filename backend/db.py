@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     started_at         REAL NOT NULL,
     ended_at           REAL,
     calibration_offset REAL NOT NULL,
-    device             TEXT
+    device             TEXT,
+    note               TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS measurements (
@@ -43,6 +44,14 @@ MEASUREMENT_FIELDS = ("t", "laeq", "lafmax", "lafmin", "lceq", "lzeq", "lzpeak")
 REPORT_THRESHOLDS = (60, 70, 80, 85, 90)
 MAX_SERIES_POINTS = 1500
 
+# Стандарти за шумова доза: критерий (dB за 8 ч = 100%), обменен коефициент
+# (с колко dB повече времето се намалява наполовина) и праг, под който не се брои.
+DOSE_STANDARDS = {
+    "niosh": {"criterion": 85.0, "exchange": 3.0, "threshold": 80.0},
+    "osha": {"criterion": 90.0, "exchange": 5.0, "threshold": 80.0},
+}
+WORK_DAY = 8 * 3600
+
 
 class _LeqAggregate:
     """SQL агрегат leq(x): енергийно средно на нива в dB – 10·log10(средно(10^(x/10)))."""
@@ -64,6 +73,21 @@ def energy_mean(levels: np.ndarray) -> float:
     return float(10 * np.log10(np.mean(10 ** (levels / 10))))
 
 
+def noise_dose(laeq_seconds: np.ndarray, criterion: float, exchange: float, threshold: float) -> dict:
+    """Доза в % от допустимото за работен ден. При ниво L допустимото време е
+    8 ч / 2^((L − критерий) / обменен коефициент); всеки ред е 1 секунда."""
+    levels = laeq_seconds[laeq_seconds >= threshold]
+    allowed = WORK_DAY / 2 ** ((levels - criterion) / exchange)
+    dose = float(100 * np.sum(1 / allowed))
+    # TWA – постоянното ниво за 8 ч, което би дало същата доза
+    twa = criterion + exchange / math.log10(2) * math.log10(dose / 100) if dose > 0 else None
+    return {
+        "dose": dose,
+        "twa": twa,
+        "projected": dose * WORK_DAY / len(laeq_seconds),
+    }
+
+
 class Database:
     def __init__(self, path):
         self._lock = threading.Lock()
@@ -73,7 +97,15 @@ class Database:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._close_interrupted()
+
+    def _migrate(self) -> None:
+        """Добавя колони, появили се в по-нови версии, към стари бази."""
+        columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(sessions)")}
+        if "note" not in columns:
+            with self._conn:
+                self._conn.execute("ALTER TABLE sessions ADD COLUMN note TEXT NOT NULL DEFAULT ''")
 
     def _close_interrupted(self) -> None:
         """Записи, останали „отворени“ след срив, приключват при последното си измерване."""
@@ -101,9 +133,12 @@ class Database:
         with self._lock, self._conn:
             self._conn.execute("UPDATE sessions SET ended_at = ? WHERE id = ?", (time.time(), session_id))
 
-    def rename_session(self, session_id: int, name: str) -> bool:
+    def update_session(self, session_id: int, name: str | None = None, note: str | None = None) -> bool:
         with self._lock, self._conn:
-            cur = self._conn.execute("UPDATE sessions SET name = ? WHERE id = ?", (name, session_id))
+            cur = self._conn.execute(
+                "UPDATE sessions SET name = COALESCE(?, name), note = COALESCE(?, note) WHERE id = ?",
+                (name, note, session_id),
+            )
             return cur.rowcount > 0
 
     def delete_session(self, session_id: int) -> bool:
@@ -150,7 +185,7 @@ class Database:
         events = self.events(session_id=session_id)
         end = session["ended_at"] or time.time()
         report = {"session": session, "duration": end - session["started_at"], "events": events,
-                  "summary": None, "series": None, "histogram": None, "above": None}
+                  "summary": None, "series": None, "histogram": None, "above": None, "dose": None}
         if not rows:
             return report
 
@@ -170,6 +205,9 @@ class Database:
             "l90": float(np.percentile(laeq, 10)),
         }
         report["above"] = [{"threshold": thr, "seconds": int(np.sum(laeq >= thr))} for thr in REPORT_THRESHOLDS]
+        report["dose"] = {name: noise_dose(laeq, **std) for name, std in DOSE_STANDARDS.items()}
+        loudest = int(np.argmax(lafmax))
+        report["summary"]["loudest_at"] = float(t[loudest])
 
         # Хистограма през 2 dB
         lo = math.floor(laeq.min() / 2) * 2

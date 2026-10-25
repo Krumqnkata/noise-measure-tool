@@ -34,8 +34,13 @@ DB_PATH = ROOT / "noise.db"
 SEND_INTERVAL = 0.05        # 20 кадъра в секунда към клиентите
 ALARM_RELEASE = 1.0         # колко секунди под прага, за да приключи алармата
 
+# Типичен MEMS микрофон (телефони, лаптопи) има чувствителност около −26 dBFS при
+# 94 dB SPL, т.е. 0 dBFS ≈ 120 dB SPL. С този офсет нивата излизат положителни и
+# приблизително верни още преди калибриране – като в приложенията за телефон.
+DEFAULT_CALIBRATION = 120.0
+
 DEFAULT_CONFIG = {
-    "calibration_offset": 0.0,
+    "calibration_offset": DEFAULT_CALIBRATION,
     "device": None,
     "alarm_enabled": False,
     "alarm_threshold": 85.0,
@@ -142,6 +147,7 @@ def status_message() -> dict:
         "demo": engine.demo,
         "device": config["device"],
         "calibration_offset": config["calibration_offset"],
+        "default_calibration": DEFAULT_CALIBRATION,
         "error": engine.error,
         "recording": recording,
         "alarm": {
@@ -254,8 +260,9 @@ class RecordingIn(BaseModel):
     name: str | None = Field(default=None, max_length=200)
 
 
-class RenameIn(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
+class SessionUpdateIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    note: str | None = Field(default=None, max_length=2000)
 
 
 # --- страници ---------------------------------------------------------------
@@ -413,11 +420,14 @@ async def session_report(session_id: int):
 
 
 @app.patch("/api/sessions/{session_id}")
-async def rename_session(session_id: int, body: RenameIn):
-    name = body.name.strip()
-    if not name or not db.rename_session(session_id, name):
+async def update_session(session_id: int, body: SessionUpdateIn):
+    name = body.name.strip() if body.name is not None else None
+    if name == "":
+        raise HTTPException(400, "Името не може да е празно")
+    note = body.note.strip() if body.note is not None else None
+    if not db.update_session(session_id, name=name, note=note):
         raise HTTPException(404, "Няма такъв запис")
-    if recording and recording["id"] == session_id:
+    if name and recording and recording["id"] == session_id:
         recording["name"] = name
         await broadcast(status_message())
     return {"ok": True}

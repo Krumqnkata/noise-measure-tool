@@ -243,22 +243,25 @@ class AudioEngine:
             freq = 440.0 * 2 ** math.sin(2 * math.pi * sec / 20)
             phases = phase + 2 * math.pi * freq * n / SAMPLE_RATE
             phase = phases[-1] % (2 * math.pi)
-            tone_amp = 0.15 * (0.5 + 0.5 * math.sin(2 * math.pi * sec / 13))
+            tone_amp = 0.5 + 0.5 * math.sin(2 * math.pi * sec / 13)
             tone = tone_amp * (np.sin(phases) + 0.3 * np.sin(2 * phases))
 
-            hum = 0.03 * np.sin(2 * math.pi * 50 * t)          # мрежов брум
-            whistle = 0.01 * np.sin(2 * math.pi * 3150 * t)    # постоянен висок тон
+            hum = 0.3 * np.sin(2 * math.pi * 50 * t)           # мрежов брум
+            whistle = 0.1 * np.sin(2 * math.pi * 3150 * t)     # постоянен висок тон
+            noise_amp = 0.2 + (0.5 + 0.5 * math.sin(2 * math.pi * sec / 8)) ** 3
+            noise = noise_amp * rng.standard_normal(BLOCK_SIZE)
 
-            # Широколентов шум с бавно нарастваща и затихваща сила + редки удари
-            noise_amp = 0.005 + 0.08 * (0.5 + 0.5 * math.sin(2 * math.pi * sec / 8)) ** 3
+            # Общото ниво бавно се мени между ≈ −80 и −40 dBFS (≈ 40–80 dB при
+            # офсет 120), а редките „удари“ го вдигат с още ~22 dB.
+            level_db = -60 + 15 * math.sin(2 * math.pi * sec / 40)
             if burst_left == 0 and rng.random() < 0.004:
                 burst_left = int(rng.integers(5, 20))
             if burst_left:
-                noise_amp += 0.35
+                level_db += 22
                 burst_left -= 1
-            noise = noise_amp * rng.standard_normal(BLOCK_SIZE)
+            gain = 10 ** (level_db / 20)
 
-            self._push(np.clip(tone + hum + whistle + noise, -1.0, 1.0))
+            self._push(np.clip(gain * (tone + hum + whistle + noise), -1.0, 1.0))
             pos += BLOCK_SIZE
 
             # Темпо като на истинска звукова карта
