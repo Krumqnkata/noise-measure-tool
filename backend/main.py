@@ -19,7 +19,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -274,7 +274,8 @@ async def index():
 
 @app.get("/sessions")
 async def sessions_page():
-    return FileResponse(STATIC_DIR / "sessions.html")
+    # Записите вече са раздел в основната страница; старият адрес води там
+    return RedirectResponse("/#records")
 
 
 # --- измерване --------------------------------------------------------------
