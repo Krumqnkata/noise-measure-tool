@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.claude/
+
+# Локални данни
+config.json
+noise.db
+noise.db-*

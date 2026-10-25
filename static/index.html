@@ -1,0 +1,748 @@
+<!doctype html>
+<html lang="bg">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Шумомер</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/static/common.js"></script>
+  <style>
+    canvas { display: block; width: 100%; }
+    .spectrogram-scale { background: linear-gradient(to right, #000004, #420a68, #932667, #dd513a, #fca50a, #fcffa4); }
+    .seg button { padding: 0.25rem 0.75rem; font-size: 0.875rem; border-radius: 0.375rem; color: #94a3b8; }
+    .seg button[aria-pressed="true"] { background: #334155; color: #f1f5f9; }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
+  <div class="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:py-6">
+
+    <header class="flex flex-wrap items-center justify-between gap-3">
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
+        <div>
+          <h1 class="text-xl font-semibold tracking-tight sm:text-2xl">Шумомер</h1>
+          <p id="mode-label" class="text-sm text-slate-400">Измерване на шум в реално време</p>
+        </div>
+        <nav class="flex gap-1 rounded-lg bg-slate-900 p-1 text-sm ring-1 ring-slate-800">
+          <a href="/" class="rounded-md bg-slate-700 px-3 py-1.5 font-medium">На живо</a>
+          <a href="/sessions" class="rounded-md px-3 py-1.5 text-slate-400 hover:text-slate-100">Записи</a>
+        </nav>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1.5 text-sm ring-1 ring-slate-800">
+          <span id="conn-dot" class="h-2.5 w-2.5 rounded-full" style="background:#facc15"></span>
+          <span id="conn-text">Свързване…</span>
+        </div>
+        <button id="toggle" class="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium ring-1 ring-slate-700 transition hover:bg-slate-700 disabled:opacity-50">Старт</button>
+      </div>
+    </header>
+
+    <div id="alarm-banner" class="hidden animate-pulse rounded-xl bg-red-600 px-4 py-3 font-semibold text-white shadow-lg shadow-red-900/40">
+      ⚠ <span id="alarm-text">Превишен праг</span>
+    </div>
+    <div id="error" class="hidden rounded-xl bg-red-950/60 px-4 py-3 text-sm text-red-200 ring-1 ring-red-900"></div>
+
+    <section class="grid gap-4 lg:grid-cols-3">
+      <!-- Текущо ниво и статистика -->
+      <div class="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800 sm:p-6 lg:col-span-2">
+        <div class="mb-4 flex flex-wrap items-center gap-3 text-sm text-slate-400">
+          <span>Претегляне</span>
+          <div id="seg-weighting" class="seg flex gap-1 rounded-lg bg-slate-800/60 p-1">
+            <button data-value="A">A</button><button data-value="C">C</button><button data-value="Z">Z</button>
+          </div>
+          <span>Време</span>
+          <div id="seg-time" class="seg flex gap-1 rounded-lg bg-slate-800/60 p-1">
+            <button data-value="F">Fast</button><button data-value="S">Slow</button>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-end justify-between gap-6">
+          <div>
+            <div class="text-xs uppercase tracking-wider text-slate-400">Текущо ниво · <span id="metric-name">LAF</span></div>
+            <div class="flex items-baseline gap-2">
+              <span id="level" class="text-7xl font-bold leading-none tabular-nums sm:text-8xl">--</span>
+              <span id="level-unit" class="text-2xl text-slate-400">dB(A)</span>
+            </div>
+            <div id="level-label" class="mt-2 text-sm font-medium text-slate-400">Няма данни</div>
+          </div>
+          <dl class="grid min-w-[16rem] max-w-md flex-1 grid-cols-3 gap-4 text-sm">
+            <div>
+              <dt class="text-slate-400">LAF / LCF</dt>
+              <dd class="text-lg font-semibold tabular-nums"><span id="dba">--</span> <span class="text-slate-500">/</span> <span id="dbc">--</span></dd>
+            </div>
+            <div>
+              <dt class="text-slate-400">Пик (Z)</dt>
+              <dd class="text-lg font-semibold tabular-nums"><span id="peak-db">--</span> <span class="text-sm font-normal text-slate-500">dB</span></dd>
+            </div>
+            <div>
+              <dt class="text-slate-400">Пикова честота</dt>
+              <dd id="peak-freq" class="text-lg font-semibold tabular-nums">--</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="mt-6 flex flex-wrap items-end justify-between gap-4 border-t border-slate-800 pt-4">
+          <dl class="grid min-w-[15rem] flex-1 grid-cols-3 gap-4 text-sm">
+            <div>
+              <dt class="text-slate-400">Мин</dt>
+              <dd id="stat-min" class="text-2xl font-semibold tabular-nums">--</dd>
+            </div>
+            <div>
+              <dt class="text-slate-400">Средно (Leq)</dt>
+              <dd id="stat-avg" class="text-2xl font-semibold tabular-nums">--</dd>
+            </div>
+            <div>
+              <dt class="text-slate-400">Макс</dt>
+              <dd id="stat-max" class="text-2xl font-semibold tabular-nums">--</dd>
+            </div>
+          </dl>
+          <div class="flex items-center gap-3">
+            <span class="text-sm text-slate-400">Сесия: <span id="session-time" class="tabular-nums">00:00</span></span>
+            <button id="reset" class="rounded-lg bg-slate-800 px-3 py-2 text-sm ring-1 ring-slate-700 transition hover:bg-slate-700">Нулиране</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Настройки -->
+      <div class="space-y-4 rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800 sm:p-6">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Настройки</h2>
+        <label class="block space-y-1.5">
+          <span class="text-sm text-slate-300">Входно устройство</span>
+          <select id="device" class="w-full rounded-lg bg-slate-800 px-3 py-2 text-sm ring-1 ring-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-60"></select>
+        </label>
+        <div class="space-y-1.5">
+          <label for="offset" class="text-sm text-slate-300">Калибрационен офсет (dB)</label>
+          <div class="flex gap-2">
+            <input id="offset" type="number" step="0.5" value="0" class="w-full min-w-0 rounded-lg bg-slate-800 px-3 py-2 text-sm tabular-nums ring-1 ring-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500">
+            <button id="offset-apply" class="shrink-0 rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium transition hover:bg-sky-500">Приложи</button>
+          </div>
+          <p class="text-xs leading-relaxed text-slate-500">
+            Добавя се към всички нива, за да показват приблизително dB SPL. Без калибриране
+            стойностите са в dBFS (спрямо пълната скала на микрофона) и са отрицателни.
+            Сравни с еталонен шумомер и въведи разликата.
+          </p>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-xs text-slate-400">
+          <div class="flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full" style="background:#4ade80"></span>&lt; 60 тихо</div>
+          <div class="flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full" style="background:#facc15"></span>60–80 умерено</div>
+          <div class="flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full" style="background:#fb923c"></span>80–90 шумно</div>
+          <div class="flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full" style="background:#f87171"></span>&gt; 90 опасно</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid gap-4 lg:grid-cols-2">
+      <!-- Запис в базата -->
+      <div class="space-y-3 rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800 sm:p-6">
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Запис</h2>
+          <a href="/sessions" class="text-sm text-sky-400 hover:text-sky-300">Всички записи →</a>
+        </div>
+        <div id="rec-idle" class="flex gap-2">
+          <input id="rec-name" type="text" maxlength="200" placeholder="Име на записа (по избор)" class="w-full min-w-0 rounded-lg bg-slate-800 px-3 py-2 text-sm ring-1 ring-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500">
+          <button id="rec-start" class="shrink-0 rounded-lg bg-red-600 px-3 py-2 text-sm font-medium transition hover:bg-red-500">● Започни запис</button>
+        </div>
+        <div id="rec-active" class="hidden flex-wrap items-center justify-between gap-3">
+          <div class="flex min-w-0 items-center gap-2">
+            <span class="h-3 w-3 shrink-0 animate-pulse rounded-full bg-red-500"></span>
+            <span id="rec-label" class="truncate text-sm font-medium"></span>
+            <span id="rec-time" class="text-sm tabular-nums text-slate-400">00:00</span>
+          </div>
+          <button id="rec-stop" class="rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium ring-1 ring-slate-700 transition hover:bg-slate-700">■ Спри запис</button>
+        </div>
+        <p class="text-xs leading-relaxed text-slate-500">
+          Всяка секунда се пазят LAeq, LAFmax/min, LCeq, LZeq и пик в <code>noise.db</code>.
+          В „Записи“ има отчет (L10/L50/L90, време над праг, хистограма) и CSV експорт.
+        </p>
+      </div>
+
+      <!-- Аларма -->
+      <div class="space-y-3 rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800 sm:p-6">
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Аларма <span class="font-normal normal-case tracking-normal text-slate-500">(по LAF)</span></h2>
+          <label class="flex items-center gap-2 text-sm">
+            <input id="alarm-enabled" type="checkbox" class="h-4 w-4 accent-sky-500"> Включена
+          </label>
+        </div>
+        <div class="flex flex-wrap items-end gap-2">
+          <label class="space-y-1">
+            <span class="text-xs text-slate-400">Праг (dB)</span>
+            <input id="alarm-threshold" type="number" step="1" class="block w-24 rounded-lg bg-slate-800 px-3 py-2 text-sm tabular-nums ring-1 ring-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500">
+          </label>
+          <label class="space-y-1">
+            <span class="text-xs text-slate-400">За поне (s)</span>
+            <input id="alarm-duration" type="number" step="0.5" min="0" class="block w-24 rounded-lg bg-slate-800 px-3 py-2 text-sm tabular-nums ring-1 ring-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500">
+          </label>
+          <button id="alarm-save" class="rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium transition hover:bg-sky-500">Запази</button>
+        </div>
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+          <label class="flex items-center gap-2"><input id="alarm-sound" type="checkbox" class="h-4 w-4 accent-sky-500"> Звуков сигнал</label>
+          <button id="alarm-notify" class="hidden rounded-lg bg-slate-800 px-3 py-1.5 ring-1 ring-slate-700 hover:bg-slate-700">Разреши известия</button>
+        </div>
+        <div>
+          <div class="mb-1 text-xs text-slate-400">Последни събития</div>
+          <ul id="alarm-events" class="divide-y divide-slate-800 text-sm"></ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800">
+      <h2 class="mb-3 text-sm font-semibold text-slate-300"><span id="history-title">LAF</span> за последните 60 секунди</h2>
+      <canvas id="history" class="h-48 sm:h-56"></canvas>
+    </section>
+
+    <section class="grid gap-4 lg:grid-cols-2">
+      <div class="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800">
+        <h2 class="mb-3 text-sm font-semibold text-slate-300">Форма на вълната</h2>
+        <canvas id="waveform" class="h-48 sm:h-56"></canvas>
+      </div>
+      <div class="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800">
+        <h2 class="mb-3 text-sm font-semibold text-slate-300">Спектър <span class="font-normal text-slate-500">(dBFS)</span></h2>
+        <canvas id="spectrum" class="h-48 sm:h-56"></canvas>
+      </div>
+    </section>
+
+    <section class="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800">
+      <h2 class="mb-3 text-sm font-semibold text-slate-300">Третинооктавни ленти <span class="font-normal text-slate-500">(непретеглени, dB)</span></h2>
+      <canvas id="octaves" class="h-56 sm:h-64"></canvas>
+    </section>
+
+    <section class="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-slate-800">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 class="text-sm font-semibold text-slate-300">Спектрограма <span class="font-normal text-slate-500">(последните ~30 s)</span></h2>
+        <div class="flex items-center gap-2 text-xs text-slate-500">
+          <span>−110 dB</span><span class="spectrogram-scale h-2 w-24 rounded"></span><span>−20 dB</span>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <div id="sg-axis" class="relative w-8 shrink-0 text-right text-[11px] text-slate-400"></div>
+        <canvas id="spectrogram" class="h-56 min-w-0 flex-1 rounded sm:h-64"></canvas>
+      </div>
+    </section>
+  </div>
+
+<script>
+const F_MIN = 20, F_MAX = 20000;
+const LOG_RANGE = Math.log10(F_MAX / F_MIN);
+const freqPos = (f) => Math.log10(f / F_MIN) / LOG_RANGE;   // 0..1 по логаритмичната ос
+const HISTORY_MS = 60000;
+const OCTAVE_NOMINAL = [20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800,
+  1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000];
+const OCTAVE_LABELS = [31.5, 125, 500, 2000, 8000];
+
+let latest = null;
+let dirty = true;
+let demoMode = false;
+let calOffset = 0;
+let weighting = store.get('weighting', 'A');
+let timeWeighting = store.get('timeWeighting', 'F');
+const history = [];
+const session = { min: Infinity, max: -Infinity, energy: 0, n: 0, start: Date.now() };
+
+const markDirty = () => { dirty = true; };
+const historyCv = setupCanvas($('history'), markDirty);
+const waveCv = setupCanvas($('waveform'), markDirty);
+const specCv = setupCanvas($('spectrum'), markDirty);
+const octCv = setupCanvas($('octaves'), markDirty);
+
+const currentLevel = (m) => m.levels[weighting][timeWeighting];
+const metricName = () => `L${weighting}${timeWeighting}`;
+
+// ---------- избор на претегляне ----------
+
+function setupSegment(id, get, set) {
+  const root = $(id);
+  const render = () => root.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.value === get()));
+  root.addEventListener('click', (e) => {
+    const v = e.target.closest('button')?.dataset.value;
+    if (!v || v === get()) return;
+    set(v);
+    render();
+    onMetricChange();
+  });
+  render();
+}
+setupSegment('seg-weighting', () => weighting, (v) => { weighting = v; store.set('weighting', v); });
+setupSegment('seg-time', () => timeWeighting, (v) => { timeWeighting = v; store.set('timeWeighting', v); });
+
+function onMetricChange() {
+  $('metric-name').textContent = metricName();
+  $('history-title').textContent = metricName();
+  $('level-unit').textContent = weighting === 'Z' ? 'dB' : `dB(${weighting})`;
+  history.length = 0;   // смесени величини в една графика нямат смисъл
+  resetSession();
+  dirty = true;
+}
+onMetricChange();
+
+// ---------- графика на историята ----------
+
+function drawHistory() {
+  const { ctx, w, h } = historyCv;
+  ctx.clearRect(0, 0, w, h);
+  const box = { L: 36, T: 8, pw: w - 44, ph: h - 28 };
+  const now = performance.now();
+  const { lo, hi } = levelRange(history.map((p) => p.v));
+  const y = drawLevelGrid(ctx, box, lo, hi);
+  const x = (t) => box.L + box.pw * (1 - (now - t) / HISTORY_MS);
+
+  ctx.textBaseline = 'top';
+  for (let s = 60; s >= 0; s -= 15) {
+    ctx.textAlign = s === 0 ? 'right' : 'center';
+    ctx.fillText(s === 0 ? 'сега' : `−${s} s`, s === 0 ? box.L + box.pw : box.L + box.pw * (1 - s / 60), h - 14);
+  }
+
+  if (history.length < 2) return;
+  ctx.beginPath();
+  history.forEach((p, i) => (i ? ctx.lineTo(x(p.t), y(p.v)) : ctx.moveTo(x(p.t), y(p.v))));
+  ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.lineTo(x(history[history.length - 1].t), box.T + box.ph);
+  ctx.lineTo(x(history[0].t), box.T + box.ph);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.08)'; ctx.fill();
+}
+
+// ---------- форма на вълната ----------
+
+let waveScale = 0.05;
+
+function drawWaveform() {
+  const { ctx, w, h } = waveCv;
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = GRID; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
+  const data = latest?.waveform;
+  if (!data) return;
+
+  // Автоматичен мащаб: бързо нагоре, плавно надолу, за да не „скача“ картината
+  let peak = 0;
+  for (const v of data) peak = Math.max(peak, Math.abs(v));
+  const target = Math.max(peak, 0.01);
+  waveScale = target > waveScale ? target : waveScale * 0.95 + target * 0.05;
+
+  ctx.beginPath();
+  const amp = h / 2 - 6;
+  data.forEach((v, i) => {
+    const xx = (i / (data.length - 1)) * w;
+    const yy = h / 2 - (v / waveScale) * amp;
+    i ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy);
+  });
+  ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 1.5; ctx.stroke();
+
+  ctx.font = FONT; ctx.fillStyle = LABEL; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
+  ctx.fillText(`мащаб ±${waveScale.toFixed(3)}`, w - 4, 4);
+}
+
+// ---------- спектър ----------
+
+const SPEC_MIN = -120, SPEC_MAX = 0;
+const GRID_FREQS = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+const LABEL_FREQS = [100, 1000, 10000];
+
+function drawSpectrum() {
+  const { ctx, w, h } = specCv;
+  ctx.clearRect(0, 0, w, h);
+  const L = 36, R = 8, T = 8, B = 20;
+  const pw = w - L - R, ph = h - T - B;
+  const y = (v) => T + ph * (1 - (Math.max(v, SPEC_MIN) - SPEC_MIN) / (SPEC_MAX - SPEC_MIN));
+
+  ctx.font = FONT; ctx.lineWidth = 1;
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let v = SPEC_MIN; v <= SPEC_MAX; v += 20) {
+    ctx.strokeStyle = GRID;
+    ctx.beginPath(); ctx.moveTo(L, y(v)); ctx.lineTo(w - R, y(v)); ctx.stroke();
+    ctx.fillStyle = LABEL; ctx.fillText(v, L - 6, y(v));
+  }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (const f of GRID_FREQS) {
+    const xx = L + pw * freqPos(f);
+    const major = LABEL_FREQS.includes(f);
+    ctx.strokeStyle = major ? 'rgba(148, 163, 184, 0.3)' : GRID;
+    ctx.beginPath(); ctx.moveTo(xx, T); ctx.lineTo(xx, T + ph); ctx.stroke();
+    if (major) { ctx.fillStyle = LABEL; ctx.fillText(`${fmtHz(f)} Hz`, xx, h - B + 6); }
+  }
+
+  const bands = latest?.spectrum;
+  if (!bands) return;
+  // Лентите са равномерни по логаритмичната ос, затова всяка заема еднаква ширина
+  const n = bands.length;
+  ctx.beginPath();
+  ctx.moveTo(L, T + ph);
+  bands.forEach((v, i) => ctx.lineTo(L + pw * ((i + 0.5) / n), y(v)));
+  ctx.lineTo(L + pw, T + ph);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, T, 0, T + ph);
+  grad.addColorStop(0, 'rgba(56, 189, 248, 0.55)');
+  grad.addColorStop(1, 'rgba(56, 189, 248, 0.03)');
+  ctx.fillStyle = grad; ctx.fill();
+  ctx.beginPath();
+  bands.forEach((v, i) => {
+    const xx = L + pw * ((i + 0.5) / n);
+    i ? ctx.lineTo(xx, y(v)) : ctx.moveTo(xx, y(v));
+  });
+  ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 1.5; ctx.stroke();
+}
+
+// ---------- третинооктавни ленти ----------
+
+function drawOctaves() {
+  const { ctx, w, h } = octCv;
+  ctx.clearRect(0, 0, w, h);
+  const box = { L: 36, T: 8, pw: w - 44, ph: h - 28 };
+  // Скалата следва калибрирането: 110 dB под офсета до самия офсет (= 0 dBFS)
+  const hi = Math.ceil(calOffset / 10) * 10, lo = hi - 110;
+  const y = (v) => box.T + box.ph * (1 - (Math.min(Math.max(v, lo), hi) - lo) / (hi - lo));
+
+  ctx.font = FONT; ctx.lineWidth = 1;
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let v = lo; v <= hi; v += 20) {
+    ctx.strokeStyle = GRID;
+    ctx.beginPath(); ctx.moveTo(box.L, y(v)); ctx.lineTo(box.L + box.pw, y(v)); ctx.stroke();
+    ctx.fillStyle = LABEL; ctx.fillText(v, box.L - 6, y(v));
+  }
+
+  const n = OCTAVE_NOMINAL.length;
+  const slot = box.pw / n;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  OCTAVE_NOMINAL.forEach((f, i) => {
+    if (OCTAVE_LABELS.includes(f)) ctx.fillText(`${fmtHz(f)}`, box.L + slot * (i + 0.5), h - 14);
+  });
+
+  const bands = latest?.octaves;
+  if (!bands) return;
+  const grad = ctx.createLinearGradient(0, box.T, 0, box.T + box.ph);
+  grad.addColorStop(0, '#7dd3fc');
+  grad.addColorStop(1, '#0369a1');
+  ctx.fillStyle = grad;
+  const gap = Math.max(1, slot * 0.18);
+  bands.forEach((v, i) => {
+    const top = y(v);
+    ctx.fillRect(box.L + slot * i + gap / 2, top, slot - gap, box.T + box.ph - top);
+  });
+}
+
+// ---------- спектрограма ----------
+// Canvas с фиксирана резолюция: 1 колона на кадър, 1 ред на честотна лента.
+// При всеки кадър картината се измества с 1 px наляво и се дорисува нова колона.
+
+const SG_COLS = 600, SG_ROWS = 128, SG_MIN = -110, SG_MAX = -20;
+const sgCanvas = $('spectrogram');
+sgCanvas.width = SG_COLS; sgCanvas.height = SG_ROWS;
+const sgCtx = sgCanvas.getContext('2d');
+sgCtx.fillStyle = '#000004'; sgCtx.fillRect(0, 0, SG_COLS, SG_ROWS);
+const sgColumn = sgCtx.createImageData(1, SG_ROWS);
+
+// Цветова таблица (приближение на „inferno“) – 256 стойности
+const COLORMAP = (() => {
+  const stops = [[0, 0, 0, 4], [0.2, 66, 10, 104], [0.4, 147, 38, 103], [0.6, 221, 81, 58], [0.8, 252, 165, 10], [1, 252, 255, 164]];
+  const lut = new Uint8Array(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255;
+    let k = 0;
+    while (k < stops.length - 2 && t > stops[k + 1][0]) k++;
+    const [t0, ...c0] = stops[k], [t1, ...c1] = stops[k + 1];
+    const f = (t - t0) / (t1 - t0);
+    for (let c = 0; c < 3; c++) lut[i * 3 + c] = Math.round(c0[c] + (c1[c] - c0[c]) * f);
+  }
+  return lut;
+})();
+
+function pushSpectrogram(bands) {
+  sgCtx.drawImage(sgCanvas, -1, 0);
+  const px = sgColumn.data;
+  const n = Math.min(bands.length, SG_ROWS);
+  for (let i = 0; i < n; i++) {
+    const t = Math.min(1, Math.max(0, (bands[i] - SG_MIN) / (SG_MAX - SG_MIN)));
+    const ci = Math.round(t * 255) * 3;
+    const o = (SG_ROWS - 1 - i) * 4;   // ниските честоти долу
+    px[o] = COLORMAP[ci]; px[o + 1] = COLORMAP[ci + 1]; px[o + 2] = COLORMAP[ci + 2]; px[o + 3] = 255;
+  }
+  sgCtx.putImageData(sgColumn, SG_COLS - 1, 0);
+}
+
+for (const f of LABEL_FREQS) {
+  const el = document.createElement('div');
+  el.className = 'absolute right-0 -translate-y-1/2';
+  el.style.top = `${(1 - freqPos(f)) * 100}%`;
+  el.textContent = fmtHz(f);
+  $('sg-axis').appendChild(el);
+}
+
+// ---------- данни ----------
+
+function onData(m) {
+  latest = m;
+  dirty = true;
+  const v = currentLevel(m);
+  const now = performance.now();
+  history.push({ t: now, v });
+  while (history.length && history[0].t < now - HISTORY_MS) history.shift();
+
+  session.min = Math.min(session.min, v);
+  session.max = Math.max(session.max, v);
+  // Средното на децибели се смята енергийно (Leq), не аритметично
+  session.energy += 10 ** (v / 10);
+  session.n++;
+
+  pushSpectrogram(m.spectrum);
+  updateReadout();
+}
+
+function updateReadout() {
+  const m = latest;
+  const v = currentLevel(m);
+  const info = levelInfo(v);
+  $('level').textContent = v.toFixed(1);
+  $('level').style.color = info.color;
+  $('level-label').textContent = info.label;
+  $('level-label').style.color = info.color;
+  $('dba').textContent = fmtDb(m.dba);
+  $('dbc').textContent = fmtDb(m.dbc);
+  $('peak-db').textContent = fmtDb(m.peak_db);
+  $('peak-freq').textContent = fmtFreq(m.peak_freq);
+
+  for (const [id, val] of [['stat-min', session.min], ['stat-max', session.max]]) {
+    $(id).textContent = fmtDb(val);
+    $(id).style.color = levelColor(val);
+  }
+  const leq = session.n ? 10 * Math.log10(session.energy / session.n) : NaN;
+  $('stat-avg').textContent = fmtDb(leq);
+  $('stat-avg').style.color = levelColor(leq);
+}
+
+function resetSession() {
+  Object.assign(session, { min: Infinity, max: -Infinity, energy: 0, n: 0, start: Date.now() });
+  for (const id of ['stat-min', 'stat-avg', 'stat-max']) { $(id).textContent = '--'; $(id).style.color = ''; }
+  $('session-time').textContent = '00:00';
+}
+
+let recording = null;
+
+setInterval(() => {
+  $('session-time').textContent = fmtDuration((Date.now() - session.start) / 1000);
+  if (recording) $('rec-time').textContent = fmtDuration(Date.now() / 1000 - recording.started_at);
+}, 1000);
+
+// ---------- статус и управление ----------
+
+let running = false;
+
+function onStatus(s) {
+  running = s.running;
+  demoMode = s.demo;
+  if (calOffset !== s.calibration_offset) { calOffset = s.calibration_offset; dirty = true; }
+  const btn = $('toggle');
+  btn.textContent = running ? 'Стоп' : 'Старт';
+  btn.className = 'rounded-lg px-4 py-2 text-sm font-medium ring-1 transition disabled:opacity-50 ' +
+    (running ? 'bg-red-600/90 ring-red-500 hover:bg-red-500' : 'bg-emerald-600 ring-emerald-500 hover:bg-emerald-500');
+  $('mode-label').textContent = s.demo ? 'Демо режим – симулиран сигнал' : 'Измерване на шум в реално време';
+  if (document.activeElement !== $('offset')) $('offset').value = s.calibration_offset;
+  const sel = $('device');
+  sel.disabled = s.demo;
+  if (!s.demo) sel.value = s.device === null ? '' : String(s.device);
+  if (s.error) showError(s.error);
+  else if (running) showError('');
+
+  recording = s.recording;
+  $('rec-idle').classList.toggle('hidden', !!recording);
+  $('rec-active').classList.toggle('hidden', !recording);
+  $('rec-active').classList.toggle('flex', !!recording);
+  if (recording) {
+    $('rec-label').textContent = recording.name;
+    $('rec-time').textContent = fmtDuration(Date.now() / 1000 - recording.started_at);
+  }
+
+  const a = s.alarm;
+  $('alarm-enabled').checked = a.enabled;
+  for (const [id, v] of [['alarm-threshold', a.threshold], ['alarm-duration', a.duration]]) {
+    if (document.activeElement !== $(id)) $(id).value = v;
+  }
+}
+
+async function loadDevices() {
+  try {
+    const { devices } = await api('/api/devices');
+    const sel = $('device');
+    sel.innerHTML = '';
+    if (!demoMode && devices.length && devices[0].index !== -1) {
+      sel.add(new Option('По подразбиране (системно)', ''));
+    }
+    for (const d of devices) {
+      const label = d.hostapi ? `${d.name} — ${d.hostapi}` : d.name;
+      sel.add(new Option(d.default ? `${label} ★` : label, d.index === -1 ? '' : String(d.index)));
+    }
+    if (!devices.length) sel.add(new Option('Няма входни устройства', ''));
+    onStatus(await api('/api/status'));
+  } catch (e) {
+    showError(`Списъкът с устройства не може да се зареди: ${e.message}`);
+  }
+}
+
+async function action(fn) {
+  try {
+    const res = await fn();
+    if (res?.type === 'status') onStatus(res);
+    showError('');
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+$('toggle').addEventListener('click', async () => {
+  $('toggle').disabled = true;
+  await action(() => api(running ? '/api/stop' : '/api/start', {}));
+  $('toggle').disabled = false;
+});
+
+$('device').addEventListener('change', async (e) => {
+  const v = e.target.value;
+  await action(() => api('/api/device', { index: v === '' ? null : Number(v) }));
+  onStatus(await api('/api/status'));
+});
+
+async function applyOffset() {
+  const v = parseFloat($('offset').value);
+  if (!Number.isFinite(v)) { showError('Въведи число за офсета'); return; }
+  await action(() => api('/api/calibration', { offset: v }));
+  resetSession();   // старите стойности са с друг офсет
+  history.length = 0;
+}
+$('offset-apply').addEventListener('click', applyOffset);
+$('offset').addEventListener('keydown', (e) => { if (e.key === 'Enter') applyOffset(); });
+$('reset').addEventListener('click', resetSession);
+
+$('rec-start').addEventListener('click', () => action(async () => {
+  const res = await api('/api/recording/start', { name: $('rec-name').value });
+  $('rec-name').value = '';
+  return res;
+}));
+$('rec-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('rec-start').click(); });
+$('rec-stop').addEventListener('click', () => action(() => api('/api/recording/stop', {})));
+
+// ---------- аларма ----------
+
+function saveAlarm() {
+  return action(() => api('/api/alarm', {
+    enabled: $('alarm-enabled').checked,
+    threshold: parseFloat($('alarm-threshold').value),
+    duration: parseFloat($('alarm-duration').value),
+  }));
+}
+$('alarm-enabled').addEventListener('change', saveAlarm);
+$('alarm-save').addEventListener('click', saveAlarm);
+
+$('alarm-sound').checked = store.get('alarmSound', true);
+$('alarm-sound').addEventListener('change', (e) => store.set('alarmSound', e.target.checked));
+
+// Известията работят само в „сигурен“ контекст (https или localhost)
+if ('Notification' in window && window.isSecureContext && Notification.permission !== 'granted') {
+  $('alarm-notify').classList.remove('hidden');
+  $('alarm-notify').addEventListener('click', async () => {
+    if ((await Notification.requestPermission()) === 'granted') $('alarm-notify').classList.add('hidden');
+  });
+}
+
+// Браузърите позволяват звук само след действие на потребителя, затова
+// AudioContext се създава при първото кликване където и да е по страницата.
+let audioCtx = null;
+document.addEventListener('pointerdown', () => {
+  if (!audioCtx && window.AudioContext) audioCtx = new AudioContext();
+}, { once: true });
+
+let beepTimer = null;
+function beep() {
+  if (!audioCtx || !$('alarm-sound').checked) return;
+  const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+  osc.frequency.value = 880;
+  gain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.25, audioCtx.currentTime + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.35);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(); osc.stop(audioCtx.currentTime + 0.4);
+}
+
+let alarmActive = false;
+function onAlarm(a) {
+  const was = alarmActive;
+  alarmActive = a.active;
+  $('alarm-banner').classList.toggle('hidden', !a.active);
+  if (a.active) {
+    $('alarm-text').textContent = `Превишен праг: ≥ ${a.threshold} dB от ${fmtTime(a.started_at)} (макс. ${fmtDb(a.max_level)} dB)`;
+    if (!beepTimer) { beep(); beepTimer = setInterval(beep, 1000); }
+    if (!was && 'Notification' in window && Notification.permission === 'granted') {
+      new Notification('Шумомер: превишен праг', { body: `Нивото е над ${a.threshold} dB (${fmtDb(a.max_level)} dB)` });
+    }
+  } else {
+    clearInterval(beepTimer); beepTimer = null;
+  }
+  if (was !== a.active) loadEvents();
+}
+
+async function loadEvents() {
+  try {
+    const { events } = await api('/api/events?limit=5');
+    const ul = $('alarm-events');
+    ul.innerHTML = '';
+    if (!events.length) {
+      ul.innerHTML = '<li class="py-1.5 text-slate-500">Няма събития</li>';
+      return;
+    }
+    for (const e of events) {
+      const li = document.createElement('li');
+      li.className = 'flex justify-between gap-2 py-1.5';
+      const dur = e.ended_at ? fmtDuration(e.ended_at - e.started_at) : 'продължава';
+      li.innerHTML = `<span class="text-slate-300"></span><span class="tabular-nums text-slate-400"></span>`;
+      li.children[0].textContent = fmtDateTime(e.started_at);
+      li.children[1].textContent = `макс. ${fmtDb(e.max_level)} dB · ${dur}`;
+      ul.appendChild(li);
+    }
+  } catch { /* не е критично */ }
+}
+
+// ---------- WebSocket с автоматично повторно свързване ----------
+
+let retries = 0;
+
+function setConn(state) {
+  const map = {
+    connecting: ['#facc15', 'Свързване…'],
+    open: ['#4ade80', 'Свързано'],
+    closed: ['#f87171', 'Няма връзка – нов опит…'],
+  };
+  const [color, text] = map[state];
+  $('conn-dot').style.background = color;
+  $('conn-text').textContent = text;
+}
+
+function connect() {
+  setConn('connecting');
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onopen = () => { retries = 0; setConn('open'); loadDevices(); loadEvents(); };
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.type === 'data') onData(m);
+    else if (m.type === 'status') onStatus(m);
+    else if (m.type === 'alarm') onAlarm(m);
+  };
+  ws.onclose = () => {
+    setConn('closed');
+    setTimeout(connect, Math.min(5000, 500 * 2 ** retries++));
+  };
+  ws.onerror = () => ws.close();
+}
+
+function frame() {
+  if (dirty) {
+    dirty = false;
+    drawHistory();
+    drawWaveform();
+    drawSpectrum();
+    drawOctaves();
+  }
+  requestAnimationFrame(frame);
+}
+
+connect();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
