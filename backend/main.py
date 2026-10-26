@@ -483,18 +483,20 @@ async def websocket_endpoint(ws: WebSocket):
 
 
 def main() -> None:
+    global engine, db, config, CONFIG_PATH
     parser = argparse.ArgumentParser(description="Шумомер в реално време")
     parser.add_argument("--demo", action="store_true", help="симулиран сигнал вместо микрофон")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--db", default=str(DB_PATH), help="път до файла на базата (по подразбиране noise.db)")
+    parser.add_argument("--config", default=str(CONFIG_PATH), help="път до настройките (по подразбиране config.json)")
     args = parser.parse_args()
 
     # Конзолата на Windows може да е с кодиране без кирилица (напр. cp1252)
     for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(encoding="utf-8", errors="replace")
 
-    global engine, db, config
+    CONFIG_PATH = Path(args.config)
     config = load_config()
     db = Database(args.db)
     engine = AudioEngine(demo=args.demo, config=config)
