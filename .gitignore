@@ -8,3 +8,6 @@ venv/
 config.json
 noise.db
 noise.db-*
+
+# Моделът за разпознаване се сваля автоматично
+models/

@@ -1,4 +1,5 @@
-// Раздел „Анализ“: спектър, форма на вълната, третинооктавни ленти и спектрограма
+// Раздел „Анализ“: разпознаване на звука, спектър, форма на вълната,
+// третинооктавни ленти и спектрограма
 
 const F_MIN = 20, F_MAX = 20000;
 const LOG_RANGE = Math.log10(F_MAX / F_MIN);
@@ -16,6 +17,56 @@ let maxHold = null;
 function resetAnalysis() {
   maxHold = null;
   dirty = true;
+}
+
+// ---------- разпознаване на звука ----------
+
+let lastSound = null;
+let classifierStatus = { state: 'starting', error: null };
+
+function onSound(m) {
+  lastSound = m;
+  const cat = soundCategory(m.category);
+  const name = t(cat.name);
+  const pct = `${Math.round(m.score * 100)}%`;
+
+  $('src-icon').textContent = cat.icon;
+  $('src-name').textContent = name;
+  $('src-score').textContent = t('сигурност {pct}', { pct });
+  $('side-source').hidden = false;
+  $('side-source').textContent = `${cat.icon} ${name}`;
+
+  $('cls-icon').textContent = cat.icon;
+  $('cls-name').textContent = name;
+  // Имената от модела са на английски (AudioSet); показваме ги като подсказка
+  $('cls-labels').textContent = `${t('Модел:')} ${m.labels.map((l) => `${l.name} ${Math.round(l.score * 100)}%`).join(', ')}`;
+  renderBars($('cls-bars'), m.categories.map((c) => ({
+    icon: soundCategory(c.id).icon, label: t(soundCategory(c.id).name),
+    value: `${Math.round(c.score * 100)}%`, pct: c.score * 100,
+  })));
+}
+
+function renderClassifierStatus(status) {
+  classifierStatus = status;
+  const messages = {
+    starting: 'Моделът се зарежда…',
+    downloading: 'Свалям модела за разпознаване (~4 MB)…',
+    ready: 'Работи. Моделът е YAMNet на Google (AudioSet, 521 вида звуци, лиценз Apache 2.0).',
+    missing_runtime: 'Изключено – липсва библиотеката. Инсталирай я с „pip install -r requirements-ml.txt“ и рестартирай сървъра.',
+    disabled: 'Изключено с флага --no-classifier.',
+    error: 'Грешка: {error}',
+  };
+  const text = t(messages[status.state] || status.state, { error: status.error || '' });
+  $('cls-status').textContent = text;
+  const ready = status.state === 'ready';
+  $('cls-notice').hidden = ready;
+  $('cls-notice').textContent = text;
+  $('cls-body').hidden = !ready;
+  if (!ready) {
+    $('src-icon').textContent = '❔';
+    $('src-name').textContent = t('Няма разпознаване');
+    $('src-score').textContent = status.state === 'downloading' ? t('моделът се сваля…') : '';
+  }
 }
 
 // ---------- форма на вълната ----------
@@ -36,7 +87,7 @@ function drawWaveform() {
   for (const v of data) peak = Math.max(peak, Math.abs(v));
   const target = Math.max(peak, 1e-4);
   waveScale = target > waveScale ? target : waveScale * 0.95 + target * 0.05;
-  $('wave-scale').textContent = `усилено ×${(1 / waveScale).toFixed(0)}`;
+  $('wave-scale').textContent = t('усилено ×{n}', { n: (1 / waveScale).toFixed(0) });
 
   const amp = h / 2 - 6;
   drawSeries(ctx, data.map((v, i) => [(i / (data.length - 1)) * w, h / 2 - (v / waveScale) * amp]), COLORS.accent);
@@ -62,10 +113,10 @@ attachTooltip(specCv, (x) => {
   const n = bands.length;
   const i = Math.min(n - 1, Math.max(0, Math.floor(((x - L) / pw) * n)));
   const bx = L + pw * ((i + 0.5) / n);
-  const rows = [{ value: `${(bands[i] + calOffset).toFixed(1)} dB`, label: 'сега', color: COLORS.accent }];
+  const rows = [{ value: `${(bands[i] + calOffset).toFixed(1)} dB`, label: t('сега'), color: COLORS.accent }];
   const points = [{ y: specCv.y(bands[i]), color: COLORS.accent }];
   if (maxHold) {
-    rows.push({ value: `${(maxHold[i] + calOffset).toFixed(1)} dB`, label: 'максимум', color: COLORS.hold });
+    rows.push({ value: `${(maxHold[i] + calOffset).toFixed(1)} dB`, label: t('максимум'), color: COLORS.hold });
     points.push({ y: specCv.y(maxHold[i]), color: COLORS.hold });
   }
   return { x: bx, title: fmtFreq(posFreq((i + 0.5) / n)), rows, points };
@@ -145,7 +196,7 @@ attachTooltip(octCv, (x) => {
   return {
     x: L + slot * (i + 0.5),
     title: `${fmtHz(OCTAVE_NOMINAL[i])} Hz`,
-    rows: [{ value: `${bands[i].toFixed(1)} dB`, label: 'ниво' }],
+    rows: [{ value: `${bands[i].toFixed(1)} dB`, label: t('ниво') }],
     index: i,
   };
 }, markDirty);
@@ -188,7 +239,7 @@ function drawOctaves() {
     const top = y(v);
     const hgt = base - top;
     if (hgt < 1) return;
-    ctx.fillStyle = cv.hover?.index === i ? '#5d9df0' : COLORS.accent;
+    ctx.fillStyle = cv.hover?.index === i ? COLORS.accentHover : COLORS.accent;
     ctx.beginPath();
     ctx.roundRect(box.L + slot * i + (slot - barW) / 2, top, barW, hgt, [Math.min(4, hgt), Math.min(4, hgt), 0, 0]);
     ctx.fill();
@@ -211,11 +262,11 @@ const COLORMAP = (() => {
   const stops = [[0, 0, 0, 4], [0.2, 66, 10, 104], [0.4, 147, 38, 103], [0.6, 221, 81, 58], [0.8, 252, 165, 10], [1, 252, 255, 164]];
   const lut = new Uint8Array(256 * 3);
   for (let i = 0; i < 256; i++) {
-    const t = i / 255;
+    const tt = i / 255;
     let k = 0;
-    while (k < stops.length - 2 && t > stops[k + 1][0]) k++;
+    while (k < stops.length - 2 && tt > stops[k + 1][0]) k++;
     const [t0, ...c0] = stops[k], [t1, ...c1] = stops[k + 1];
-    const f = (t - t0) / (t1 - t0);
+    const f = (tt - t0) / (t1 - t0);
     for (let c = 0; c < 3; c++) lut[i * 3 + c] = Math.round(c0[c] + (c1[c] - c0[c]) * f);
   }
   return lut;
@@ -226,8 +277,8 @@ function pushSpectrogram(bands) {
   const px = sgColumn.data;
   const n = Math.min(bands.length, SG_ROWS);
   for (let i = 0; i < n; i++) {
-    const t = Math.min(1, Math.max(0, (bands[i] - SG_MIN) / (SG_MAX - SG_MIN)));
-    const ci = Math.round(t * 255) * 3;
+    const tt = Math.min(1, Math.max(0, (bands[i] - SG_MIN) / (SG_MAX - SG_MIN)));
+    const ci = Math.round(tt * 255) * 3;
     const o = (SG_ROWS - 1 - i) * 4;   // ниските честоти долу
     px[o] = COLORMAP[ci]; px[o + 1] = COLORMAP[ci + 1]; px[o + 2] = COLORMAP[ci + 2]; px[o + 3] = 255;
   }

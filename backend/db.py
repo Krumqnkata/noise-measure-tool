@@ -30,6 +30,14 @@ CREATE TABLE IF NOT EXISTS measurements (
 );
 CREATE INDEX IF NOT EXISTS idx_measurements_session ON measurements(session_id, t);
 
+CREATE TABLE IF NOT EXISTS sources (
+    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    t          REAL NOT NULL,
+    category   TEXT NOT NULL,
+    score      REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sources_session ON sources(session_id);
+
 CREATE TABLE IF NOT EXISTS events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
@@ -156,6 +164,26 @@ class Database:
                 [(session_id, *(r[f] for f in MEASUREMENT_FIELDS)) for r in rows],
             )
 
+    def add_sources(self, session_id: int, results: list[dict]) -> None:
+        if not results:
+            return
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "INSERT INTO sources (session_id, t, category, score) VALUES (?, ?, ?, ?)",
+                [(session_id, r["t"], r["category"], r["score"]) for r in results],
+            )
+
+    def sources(self, session_id: int) -> list[dict]:
+        """Колко време (в разпознавания, ~1 s всяко) е чуван всеки източник."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT category, COUNT(*) AS seconds FROM sources
+                   WHERE session_id = ? GROUP BY category ORDER BY seconds DESC""",
+                (session_id,),
+            ).fetchall()
+        total = sum(r["seconds"] for r in rows)
+        return [{"category": r["category"], "seconds": r["seconds"], "share": r["seconds"] / total} for r in rows]
+
     def list_sessions(self) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
@@ -185,7 +213,8 @@ class Database:
         events = self.events(session_id=session_id)
         end = session["ended_at"] or time.time()
         report = {"session": session, "duration": end - session["started_at"], "events": events,
-                  "summary": None, "series": None, "histogram": None, "above": None, "dose": None}
+                  "summary": None, "series": None, "histogram": None, "above": None, "dose": None,
+                  "sources": self.sources(session_id)}
         if not rows:
             return report
 

@@ -17,6 +17,7 @@ BLOCK_SIZE = 1024
 FFT_SIZE = 2048
 OCTAVE_FFT_SIZE = 8192                  # по-голям FFT, за да има смисъл при ниските ленти
 BUFFER_SIZE = OCTAVE_FFT_SIZE
+CLIP_SIZE = 43_200                      # ~0.98 s – колкото иска разпознаването на звуци
 WAVEFORM_SAMPLES = 1024
 WAVEFORM_POINTS = 512
 NUM_BANDS = 128
@@ -121,7 +122,8 @@ class AudioEngine:
     def _reset_state(self) -> None:
         with self._lock:
             self._raw = np.zeros(BUFFER_SIZE)
-            self._zi = {w: np.zeros((sos.shape[0], 2)) for w, sos in self._sos.items()}
+            self._clip = np.zeros(CLIP_SIZE, dtype=np.float32)
+            self._zi ={w: np.zeros((sos.shape[0], 2)) for w, sos in self._sos.items()}
             self._ms = None          # текущ среден квадрат за всяка комбинация претегляне/време
             self._acc = _SecondAccumulator()
             self._seconds: list[dict] = []
@@ -149,6 +151,7 @@ class AudioEngine:
 
         with self._lock:
             self._raw = np.concatenate((self._raw[len(block):], block))
+            self._clip = np.concatenate((self._clip[len(block):], block.astype(np.float32)))
             self._ms = ms
             if acc.n >= SAMPLE_RATE:
                 self._seconds.append(self._finish_second(acc))
@@ -182,7 +185,7 @@ class AudioEngine:
                 self._demo_thread.start()
             else:
                 if sd is None:
-                    raise RuntimeError("Библиотеката sounddevice/PortAudio не е налична")
+                    raise RuntimeError("sounddevice/PortAudio is not available")
                 self._stream = sd.InputStream(
                     device=self.config["device"],
                     channels=1,
@@ -209,6 +212,11 @@ class AudioEngine:
             self._demo_thread.join()
             self._demo_thread = None
         self.running = False
+
+    def clip(self) -> np.ndarray:
+        """Последната ~1 секунда звук (за разпознаването на източника)."""
+        with self._lock:
+            return self._clip.copy()
 
     def pop_seconds(self) -> list[dict]:
         """Връща и изчиства натрупаните едносекундни обобщения."""

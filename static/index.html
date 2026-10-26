@@ -6,54 +6,80 @@
   <meta name="theme-color" content="#101a22">
   <title>Шумомер</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233987e5' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M3.5 16a8.5 8.5 0 0 1 17 0'/%3E%3Cpath d='M12 16l3-5'/%3E%3C/svg%3E">
+  <!-- Темата се избира преди първото рисуване, за да няма проблясване -->
+  <script>
+    (function () {
+      var pref = 'system';
+      try { pref = JSON.parse(localStorage.getItem('theme')) || 'system'; } catch (e) {}
+      var light = pref === 'light' || (pref === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches);
+      document.documentElement.dataset.theme = light ? 'light' : 'dark';
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
+    (function () {
+    const v = (name) => `rgb(var(--${name}) / <alpha-value>)`;
     tailwind.config = {
       theme: {
         extend: {
           colors: {
-            bg: '#101a22', panel: '#17232d', raised: '#1e2d39', line: '#2a3b48',
-            ink: '#ecf1f4', ink2: '#a7b6c2', ink3: '#7a8d9b',
-            accent: '#3987e5', good: '#0ca30c', warn: '#fab219', serious: '#ec835a', crit: '#d03b3b',
+            bg: v('bg'), panel: v('panel'), raised: v('raised'), line: v('line'),
+            ink: v('ink'), ink2: v('ink2'), ink3: v('ink3'), accent: v('accent'),
+            'crit-ink': v('crit-ink'), 'warn-ink': v('warn-ink'),
+            good: '#0ca30c', warn: '#fab219', serious: '#ec835a', crit: '#d03b3b',
           },
           fontFamily: { sans: ['Onest', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
         },
       },
     };
+    })();
   </script>
   <style>
-    :root { color-scheme: dark; }
-    body { background: #101a22; }
+    /* Цветовете на двете теми като RGB тройки (за прозрачност в Tailwind и в графиките) */
+    :root, :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: 16 26 34; --panel: 23 35 45; --raised: 30 45 57; --line: 42 59 72;
+      --ink: 236 241 244; --ink2: 167 182 194; --ink3: 122 141 155; --accent: 57 135 229;
+      --track: 34 50 62; --grid: 38 54 67; --axis: 133 151 165; --tick: 93 113 128; --tick-minor: 58 76 89;
+      --crit-ink: 254 202 202; --warn-ink: 254 243 199; --shadow: 0 0 0;
+    }
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: 243 245 247; --panel: 255 255 255; --raised: 234 239 243; --line: 219 226 232;
+      --ink: 20 31 40; --ink2: 72 88 102; --ink3: 102 118 132; --accent: 42 120 214;
+      --track: 229 234 238; --grid: 231 236 240; --axis: 102 118 132; --tick: 140 156 168; --tick-minor: 203 212 220;
+      --crit-ink: 153 27 27; --warn-ink: 113 63 18; --shadow: 30 45 60;
+    }
+    body { background: rgb(var(--bg)); }
     canvas { display: block; width: 100%; }
     [hidden] { display: none !important; }
-    :focus-visible { outline: 2px solid #3987e5; outline-offset: 2px; border-radius: 6px; }
+    :focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; border-radius: 6px; }
 
-    .seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; background: #17232d; box-shadow: inset 0 0 0 1px #2a3b48; }
-    .seg button { padding: 0.3rem 0.8rem; font-size: 0.875rem; border-radius: 7px; color: #a7b6c2; }
-    .seg button:hover { color: #ecf1f4; }
-    .seg button[aria-pressed="true"] { background: #2a3b48; color: #ecf1f4; font-weight: 600; }
+    .seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; background: rgb(var(--panel)); box-shadow: inset 0 0 0 1px rgb(var(--line)); }
+    .seg button { padding: 0.3rem 0.8rem; font-size: 0.875rem; border-radius: 7px; color: rgb(var(--ink2)); }
+    .seg button:hover { color: rgb(var(--ink)); }
+    .seg button[aria-pressed="true"] { background: rgb(var(--line)); color: rgb(var(--ink)); font-weight: 600; }
 
-    .nav-link[aria-current="page"] { color: #ecf1f4; }
-    .side .nav-link[aria-current="page"] { background: #1e2d39; box-shadow: inset 3px 0 0 #3987e5; }
-    .bottom .nav-link[aria-current="page"] svg { color: #3987e5; }
+    .nav-link[aria-current="page"] { color: rgb(var(--ink)); }
+    .side .nav-link[aria-current="page"] { background: rgb(var(--raised)); box-shadow: inset 3px 0 0 rgb(var(--accent)); }
+    .bottom .nav-link[aria-current="page"] svg { color: rgb(var(--accent)); }
 
     .chart-tip { position: absolute; z-index: 10; pointer-events: none; min-width: 7rem; padding: 0.45rem 0.6rem;
-      border-radius: 8px; background: #1e2d39; box-shadow: 0 0 0 1px #2a3b48, 0 8px 24px rgba(0, 0, 0, 0.35);
+      border-radius: 8px; background: rgb(var(--raised)); box-shadow: 0 0 0 1px rgb(var(--line)), 0 8px 24px rgb(var(--shadow) / 0.3);
       font-size: 12px; line-height: 1.5; white-space: nowrap; }
 
-    .field { width: 100%; min-width: 0; border-radius: 8px; background: #101a22; padding: 0.5rem 0.75rem; font-size: 0.875rem;
-      box-shadow: inset 0 0 0 1px #2a3b48; }
-    .field:focus { outline: none; box-shadow: inset 0 0 0 2px #3987e5; }
-    .btn { border-radius: 8px; padding: 0.5rem 0.85rem; font-size: 0.875rem; font-weight: 500; background: #1e2d39;
-      box-shadow: inset 0 0 0 1px #2a3b48; transition: background-color 120ms; }
-    .btn:hover { background: #263846; }
-    .btn-primary { background: #3987e5; box-shadow: none; color: #fff; }
-    .btn-primary:hover { background: #4a95ee; }
+    .field { width: 100%; min-width: 0; border-radius: 8px; background: rgb(var(--bg)); padding: 0.5rem 0.75rem; font-size: 0.875rem;
+      box-shadow: inset 0 0 0 1px rgb(var(--line)); }
+    .field:focus { outline: none; box-shadow: inset 0 0 0 2px rgb(var(--accent)); }
+    .btn { border-radius: 8px; padding: 0.5rem 0.85rem; font-size: 0.875rem; font-weight: 500; background: rgb(var(--raised));
+      box-shadow: inset 0 0 0 1px rgb(var(--line)); transition: background-color 120ms, filter 120ms; }
+    .btn:hover { filter: brightness(1.12); }
+    :root[data-theme="light"] .btn:hover { filter: brightness(0.96); }
+    .btn-primary { background: rgb(var(--accent)); box-shadow: none; color: #fff; }
     .btn-danger { background: #d03b3b; box-shadow: none; color: #fff; }
-    .btn-danger:hover { background: #dc4a4a; }
 
     #ref-marker { transition: top 150ms linear; }
     #ref-dim { transition: height 150ms linear; }
@@ -70,25 +96,30 @@
     <aside class="side sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-line px-3 py-5 lg:flex">
       <a href="#meter" class="flex items-center gap-2.5 px-3">
         <svg viewBox="0 0 24 24" class="h-7 w-7 text-accent" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3.5 16a8.5 8.5 0 0 1 17 0"/><path d="M7 16a5 5 0 0 1 10 0"/><path d="M12 16l3-5"/></svg>
-        <span class="text-lg font-semibold tracking-tight">Шумомер</span>
+        <span class="text-lg font-semibold tracking-tight" data-i18n>Шумомер</span>
       </a>
-      <nav id="nav-side" class="mt-8 space-y-0.5" aria-label="Раздели"></nav>
+      <nav id="nav-side" class="mt-8 space-y-0.5" data-i18n-attr="aria-label" aria-label="Раздели"></nav>
 
       <div class="mt-auto space-y-3 px-1">
         <div class="rounded-xl bg-panel p-3 ring-1 ring-line">
           <div class="flex items-center justify-between text-xs text-ink3">
             <span id="side-metric">LAF</span>
-            <span class="flex items-center gap-1.5"><span class="conn-dot h-2 w-2 rounded-full bg-warn"></span><span class="conn-text">Свързване…</span></span>
+            <span class="flex items-center gap-1.5"><span class="conn-dot h-2 w-2 rounded-full bg-warn"></span><span class="conn-text">…</span></span>
           </div>
           <div class="mt-1 flex items-baseline gap-1.5">
             <span id="side-level" class="text-3xl font-semibold">--</span>
             <span class="side-unit text-sm text-ink2">dB(A)</span>
           </div>
+          <div id="side-source" hidden class="mt-1 truncate text-xs text-ink2"></div>
           <a id="side-rec" href="#records" hidden class="mt-2 flex items-center gap-2 text-xs text-ink2">
-            <span class="h-2 w-2 animate-pulse rounded-full bg-crit"></span>Записва <span id="side-rec-time" class="tabular-nums">00:00</span>
+            <span class="h-2 w-2 animate-pulse rounded-full bg-crit"></span><span data-i18n>Записва</span> <span id="side-rec-time" class="tabular-nums">00:00</span>
           </a>
         </div>
         <button class="toggle btn w-full">Старт</button>
+        <div class="flex gap-2">
+          <button id="side-theme" class="btn flex-1 px-2" data-i18n-attr="title" title="Смени темата"></button>
+          <button id="side-lang" class="btn flex-1 px-2" data-i18n-attr="title" title="Смени езика"></button>
+        </div>
       </div>
     </aside>
 
@@ -97,7 +128,7 @@
       <header class="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-line bg-bg/90 px-4 backdrop-blur lg:hidden">
         <a href="#meter" class="flex items-center gap-2">
           <svg viewBox="0 0 24 24" class="h-6 w-6 text-accent" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3.5 16a8.5 8.5 0 0 1 17 0"/><path d="M7 16a5 5 0 0 1 10 0"/><path d="M12 16l3-5"/></svg>
-          <span class="font-semibold">Шумомер</span>
+          <span class="font-semibold" data-i18n>Шумомер</span>
         </a>
         <div class="flex items-center gap-3">
           <span class="flex items-center gap-1.5 text-sm">
@@ -110,26 +141,26 @@
 
       <main class="mx-auto max-w-6xl px-4 pb-28 pt-5 sm:px-6 lg:px-10 lg:pb-12 lg:pt-10">
         <div id="alarm-banner" class="mb-5 hidden animate-pulse rounded-xl bg-crit px-4 py-3 font-semibold text-white">
-          ⚠ <span id="alarm-text">Превишен праг</span>
+          ⚠ <span id="alarm-text"></span>
         </div>
-        <div id="error" class="mb-5 hidden rounded-xl bg-crit/15 px-4 py-3 text-sm text-red-200 ring-1 ring-crit/40"></div>
+        <div id="error" class="mb-5 hidden rounded-xl bg-crit/15 px-4 py-3 text-sm text-crit-ink ring-1 ring-crit/40"></div>
 
         <!-- ============ НИВО ============ -->
         <section data-section="meter" hidden>
           <div class="mb-8 flex flex-wrap items-end justify-between gap-4">
             <div>
-              <h1 class="text-3xl font-semibold tracking-tight">Ниво на шума</h1>
-              <p class="mt-1 text-ink2">Колко е шумно сега и на какво прилича.</p>
+              <h1 class="text-3xl font-semibold tracking-tight" data-i18n>Ниво на шума</h1>
+              <p class="mt-1 text-ink2" data-i18n>Колко е шумно сега и на какво прилича.</p>
             </div>
             <div class="flex flex-wrap items-center gap-2">
-              <div id="seg-weighting" class="seg" role="group" aria-label="Честотно претегляне">
-                <button data-value="A" title="A – както чува човешкото ухо">A</button><button data-value="C" title="C – включва и ниските честоти">C</button><button data-value="Z" title="Z – без претегляне">Z</button>
+              <div id="seg-weighting" class="seg" role="group" data-i18n-attr="aria-label" aria-label="Честотно претегляне">
+                <button data-value="A" data-i18n-attr="title" title="A – както чува човешкото ухо">A</button><button data-value="C" data-i18n-attr="title" title="C – включва и ниските честоти">C</button><button data-value="Z" data-i18n-attr="title" title="Z – без претегляне">Z</button>
               </div>
-              <div id="seg-time" class="seg" role="group" aria-label="Времево претегляне">
-                <button data-value="F" title="Бързо – 125 ms">Fast</button><button data-value="S" title="Бавно – 1 s">Slow</button>
+              <div id="seg-time" class="seg" role="group" data-i18n-attr="aria-label" aria-label="Времево претегляне">
+                <button data-value="F" data-i18n-attr="title" title="Бързо – 125 ms">Fast</button><button data-value="S" data-i18n-attr="title" title="Бавно – 1 s">Slow</button>
               </div>
-              <button id="snapshot" class="btn" title="Запази картинка (S)">Снимка</button>
-              <button id="big-open" class="btn" title="Цял екран (F)">Цял екран</button>
+              <button id="snapshot" class="btn" data-i18n data-i18n-attr="title" title="Запази картинка (S)">Снимка</button>
+              <button id="big-open" class="btn" data-i18n data-i18n-attr="title" title="Цял екран (F)">Цял екран</button>
             </div>
           </div>
 
@@ -138,7 +169,7 @@
               <div class="grid items-center gap-8 md:grid-cols-2">
                 <div class="relative mx-auto w-full max-w-[380px]">
                   <canvas id="gauge" class="aspect-square" aria-hidden="true"></canvas>
-                  <div class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center" aria-live="off">
+                  <div class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                     <div id="metric-name" class="text-sm font-medium text-ink3">LAF</div>
                     <div id="level" class="text-7xl font-semibold leading-none sm:text-8xl">--</div>
                     <div id="level-unit" class="mt-1 text-lg text-ink2">dB(A)</div>
@@ -148,45 +179,55 @@
                 <div class="space-y-6">
                   <div class="flex items-center gap-2">
                     <span id="status-dot" class="h-2.5 w-2.5 rounded-full bg-ink3"></span>
-                    <span id="status-label" class="font-medium">Няма данни</span>
+                    <span id="status-label" class="font-medium" data-i18n>Няма данни</span>
                   </div>
-                  <div class="flex items-center gap-4">
-                    <span id="ref-icon" class="text-5xl leading-none" aria-hidden="true">🔇</span>
-                    <div>
-                      <div class="text-sm text-ink3">Прилича на</div>
-                      <div id="ref-name" class="text-xl font-semibold">—</div>
-                      <div id="ref-db" class="text-sm text-ink2"></div>
+                  <div class="grid grid-cols-2 gap-4">
+                    <div class="flex items-center gap-3">
+                      <span id="ref-icon" class="text-4xl leading-none" aria-hidden="true">🔇</span>
+                      <div class="min-w-0">
+                        <div class="text-sm text-ink3" data-i18n>Прилича на</div>
+                        <div id="ref-name" class="font-semibold leading-snug">—</div>
+                        <div id="ref-db" class="text-sm text-ink2"></div>
+                      </div>
                     </div>
+                    <a href="#analysis" class="flex items-center gap-3 rounded-lg" data-i18n-attr="title" title="Подробно в „Анализ“">
+                      <span id="src-icon" class="text-4xl leading-none" aria-hidden="true">❔</span>
+                      <div class="min-w-0">
+                        <div class="text-sm text-ink3" data-i18n>Чува се</div>
+                        <div id="src-name" class="font-semibold leading-snug">—</div>
+                        <div id="src-score" class="text-sm text-ink2"></div>
+                      </div>
+                    </a>
                   </div>
                   <dl class="grid grid-cols-3 divide-x divide-line border-y border-line">
-                    <div class="py-3 pr-3"><dt class="text-sm text-ink3">Мин</dt><dd id="stat-min" class="text-2xl font-semibold">--</dd></div>
-                    <div class="px-3 py-3"><dt class="text-sm text-ink3">Средно</dt><dd id="stat-avg" class="text-2xl font-semibold">--</dd></div>
-                    <div class="py-3 pl-3"><dt class="text-sm text-ink3">Макс</dt><dd id="stat-max" class="text-2xl font-semibold">--</dd></div>
+                    <div class="py-3 pr-3"><dt class="text-sm text-ink3" data-i18n>Мин</dt><dd id="stat-min" class="text-2xl font-semibold">--</dd></div>
+                    <div class="px-3 py-3"><dt class="text-sm text-ink3" data-i18n>Средно</dt><dd id="stat-avg" class="text-2xl font-semibold">--</dd></div>
+                    <div class="py-3 pl-3"><dt class="text-sm text-ink3" data-i18n>Макс</dt><dd id="stat-max" class="text-2xl font-semibold">--</dd></div>
                   </dl>
                   <dl class="grid grid-cols-3 gap-x-3 gap-y-3 text-sm">
-                    <div><dt class="text-ink3" title="Надвишено 10% от времето – шумните моменти">L10</dt><dd id="stat-l10" class="font-semibold">--</dd></div>
-                    <div><dt class="text-ink3" title="Медиана">L50</dt><dd id="stat-l50" class="font-semibold">--</dd></div>
-                    <div><dt class="text-ink3" title="Надвишено 90% от времето – фонът">L90</dt><dd id="stat-l90" class="font-semibold">--</dd></div>
+                    <div><dt class="text-ink3" data-i18n-attr="title" title="Надвишено 10% от времето – шумните моменти">L10</dt><dd id="stat-l10" class="font-semibold">--</dd></div>
+                    <div><dt class="text-ink3" data-i18n-attr="title" title="Медиана">L50</dt><dd id="stat-l50" class="font-semibold">--</dd></div>
+                    <div><dt class="text-ink3" data-i18n-attr="title" title="Надвишено 90% от времето – фонът">L90</dt><dd id="stat-l90" class="font-semibold">--</dd></div>
                     <div><dt class="text-ink3">LAF / LCF</dt><dd class="font-semibold"><span id="dba">--</span> / <span id="dbc">--</span></dd></div>
-                    <div><dt class="text-ink3">Пик</dt><dd id="peak-db" class="font-semibold">--</dd></div>
-                    <div><dt class="text-ink3">Честота</dt><dd id="peak-freq" class="font-semibold">--</dd></div>
+                    <div><dt class="text-ink3" data-i18n>Пик</dt><dd id="peak-db" class="font-semibold">--</dd></div>
+                    <div><dt class="text-ink3" data-i18n>Честота</dt><dd id="peak-freq" class="font-semibold">--</dd></div>
                   </dl>
                   <div class="flex items-center justify-between gap-3 text-sm text-ink2">
-                    <span>Сесия <span id="session-time" class="tabular-nums text-ink">00:00</span></span>
-                    <button id="reset" class="text-accent hover:underline" title="Нулиране (R)">Нулирай статистиката</button>
+                    <span><span data-i18n>Сесия</span> <span id="session-time" class="tabular-nums text-ink">00:00</span></span>
+                    <button id="reset" class="text-accent hover:underline" data-i18n data-i18n-attr="title" title="Нулиране (R)">Нулирай статистиката</button>
                   </div>
                 </div>
               </div>
 
               <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
-                <h2 class="mb-3 font-medium"><span id="history-title">LAF</span> за последната минута</h2>
+                <h2 class="mb-3 font-medium"><span id="history-title">LAF</span> <span data-i18n>за последната минута</span></h2>
                 <canvas id="history" class="h-44 sm:h-52"></canvas>
               </div>
             </div>
 
-            <aside class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5" aria-label="Скала на шума">
-              <h2 class="font-medium">Скала на шума</h2>
-              <p class="mb-4 text-sm text-ink3">Маркерът показва къде е текущото ниво.</p>
+            <aside class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5" data-i18n-attr="aria-label" aria-label="Скала на шума">
+              <h2 class="font-medium" data-i18n>Скала на шума</h2>
+              <p class="mb-4 text-sm text-ink3" data-i18n>Маркерът показва къде е текущото ниво.</p>
               <div class="flex gap-3">
                 <div id="ref-bar" class="relative w-2 shrink-0 rounded-full">
                   <div id="ref-dim" class="absolute inset-x-0 top-0 rounded-t-full bg-panel/80" style="height:100%"></div>
@@ -201,26 +242,47 @@
         <!-- ============ АНАЛИЗ ============ -->
         <section data-section="analysis" hidden>
           <div class="mb-8">
-            <h1 class="text-3xl font-semibold tracking-tight">Анализ на звука</h1>
-            <p class="mt-1 text-ink2">Как е разпределен звукът по честоти и как се мени във времето.</p>
+            <h1 class="text-3xl font-semibold tracking-tight" data-i18n>Анализ на звука</h1>
+            <p class="mt-1 text-ink2" data-i18n>Какво се чува, как е разпределен звукът по честоти и как се мени във времето.</p>
           </div>
 
           <div class="space-y-6">
+            <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
+              <div class="mb-4 flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h2 class="font-medium" data-i18n>Разпознаване на звука</h2>
+                  <p class="text-sm text-ink3" data-i18n>Модел YAMNet (Google, 521 вида звуци) слуша последната секунда и казва какво чува.</p>
+                </div>
+              </div>
+              <div id="cls-notice" hidden class="rounded-xl bg-raised px-4 py-3 text-sm text-ink2"></div>
+              <div id="cls-body" class="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+                <div class="flex items-center gap-4">
+                  <span id="cls-icon" class="text-6xl leading-none" aria-hidden="true">❔</span>
+                  <div>
+                    <div class="text-sm text-ink3" data-i18n>Сега се чува</div>
+                    <div id="cls-name" class="text-2xl font-semibold">—</div>
+                    <div id="cls-labels" class="mt-1 text-sm text-ink2"></div>
+                  </div>
+                </div>
+                <div id="cls-bars" class="space-y-3"></div>
+              </div>
+            </div>
+
             <div class="grid gap-6 lg:grid-cols-2">
               <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
                 <div class="mb-3 flex items-center justify-between gap-2">
-                  <h2 class="font-medium">Спектър</h2>
-                  <label class="flex items-center gap-2 text-sm text-ink2"><input id="spec-hold" type="checkbox" class="h-4 w-4 accent-warn"> Задръж максимума</label>
+                  <h2 class="font-medium" data-i18n>Спектър</h2>
+                  <label class="flex items-center gap-2 text-sm text-ink2"><input id="spec-hold" type="checkbox" class="h-4 w-4 accent-warn"> <span data-i18n>Задръж максимума</span></label>
                 </div>
                 <canvas id="spectrum" class="h-56"></canvas>
                 <p id="spec-legend" hidden class="mt-2 flex items-center gap-4 text-xs text-ink3">
-                  <span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-accent"></span>Сега</span>
-                  <span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-warn"></span>Максимум</span>
+                  <span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-accent"></span><span data-i18n>Сега</span></span>
+                  <span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-warn"></span><span data-i18n>Максимум</span></span>
                 </p>
               </div>
               <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
                 <div class="mb-3 flex items-center justify-between gap-2">
-                  <h2 class="font-medium">Форма на вълната</h2>
+                  <h2 class="font-medium" data-i18n>Форма на вълната</h2>
                   <span id="wave-scale" class="text-sm text-ink3"></span>
                 </div>
                 <canvas id="waveform" class="h-56"></canvas>
@@ -230,11 +292,11 @@
             <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
               <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h2 class="font-medium">Третинооктавни ленти</h2>
-                  <p class="text-sm text-ink3">Непретеглено ниво във всяка от 31 честотни ленти.</p>
+                  <h2 class="font-medium" data-i18n>Третинооктавни ленти</h2>
+                  <p class="text-sm text-ink3" data-i18n>Непретеглено ниво във всяка от 31 честотни ленти.</p>
                 </div>
-                <div id="seg-oct-view" class="seg" role="group" aria-label="Изглед">
-                  <button data-value="chart">Графика</button><button data-value="table">Таблица</button>
+                <div id="seg-oct-view" class="seg" role="group">
+                  <button data-value="chart" data-i18n>Графика</button><button data-value="table" data-i18n>Таблица</button>
                 </div>
               </div>
               <canvas id="octaves" class="h-64"></canvas>
@@ -244,8 +306,8 @@
             <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
               <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h2 class="font-medium">Спектрограма</h2>
-                  <p class="text-sm text-ink3">Последните ~30 секунди: честота отдолу нагоре, време отляво надясно.</p>
+                  <h2 class="font-medium" data-i18n>Спектрограма</h2>
+                  <p class="text-sm text-ink3" data-i18n>Последните ~30 секунди: честота отдолу нагоре, време отляво надясно.</p>
                 </div>
                 <div class="flex items-center gap-2 text-xs text-ink3">
                   <span id="sg-lo">10 dB</span><span class="h-2 w-24 rounded" style="background:linear-gradient(to right,#000004,#420a68,#932667,#dd513a,#fca50a,#fcffa4)"></span><span id="sg-hi">100 dB</span>
@@ -262,45 +324,45 @@
         <!-- ============ ДОЗА ============ -->
         <section data-section="dose" hidden>
           <div class="mb-8">
-            <h1 class="text-3xl font-semibold tracking-tight">Шумова доза</h1>
-            <p class="mt-1 max-w-2xl text-ink2">Каква част от допустимия шум за 8-часов ден си получил от началото на сесията. Смята се по LAS – A-претегляне, бавен отклик.</p>
+            <h1 class="text-3xl font-semibold tracking-tight" data-i18n>Шумова доза</h1>
+            <p class="mt-1 max-w-2xl text-ink2" data-i18n>Каква част от допустимия шум за 8-часов ден си получил от началото на сесията. Смята се по LAS – A-претегляне, бавен отклик.</p>
           </div>
 
           <div class="grid gap-6 md:grid-cols-2">
             <div data-std="niosh" class="rounded-2xl bg-panel p-5 ring-1 ring-line">
               <h2 class="font-medium">NIOSH</h2>
-              <p class="text-sm text-ink3">85 dB за 8 часа; всеки 3 dB отгоре намаляват времето наполовина.</p>
+              <p class="text-sm text-ink3" data-i18n>85 dB за 8 часа; всеки 3 dB отгоре намаляват времето наполовина.</p>
               <div data-f="dose" class="mt-5 text-5xl font-semibold">0%</div>
               <div class="mt-3 h-2.5 overflow-hidden rounded-full bg-raised"><div data-f="bar" class="h-full rounded-full" style="width:0"></div></div>
               <dl class="mt-5 grid grid-cols-2 gap-3 text-sm">
-                <div><dt class="text-ink3">Средно за 8 ч (TWA)</dt><dd data-f="twa" class="text-lg font-semibold">--</dd></div>
-                <div><dt class="text-ink3">Прогноза за 8 ч</dt><dd data-f="proj" class="text-lg font-semibold">--</dd></div>
+                <div><dt class="text-ink3" data-i18n>Средно за 8 ч (TWA)</dt><dd data-f="twa" class="text-lg font-semibold">--</dd></div>
+                <div><dt class="text-ink3" data-i18n>Прогноза за 8 ч</dt><dd data-f="proj" class="text-lg font-semibold">--</dd></div>
               </dl>
             </div>
             <div data-std="osha" class="rounded-2xl bg-panel p-5 ring-1 ring-line">
               <h2 class="font-medium">OSHA</h2>
-              <p class="text-sm text-ink3">90 dB за 8 часа; всеки 5 dB отгоре намаляват времето наполовина.</p>
+              <p class="text-sm text-ink3" data-i18n>90 dB за 8 часа; всеки 5 dB отгоре намаляват времето наполовина.</p>
               <div data-f="dose" class="mt-5 text-5xl font-semibold">0%</div>
               <div class="mt-3 h-2.5 overflow-hidden rounded-full bg-raised"><div data-f="bar" class="h-full rounded-full" style="width:0"></div></div>
               <dl class="mt-5 grid grid-cols-2 gap-3 text-sm">
-                <div><dt class="text-ink3">Средно за 8 ч (TWA)</dt><dd data-f="twa" class="text-lg font-semibold">--</dd></div>
-                <div><dt class="text-ink3">Прогноза за 8 ч</dt><dd data-f="proj" class="text-lg font-semibold">--</dd></div>
+                <div><dt class="text-ink3" data-i18n>Средно за 8 ч (TWA)</dt><dd data-f="twa" class="text-lg font-semibold">--</dd></div>
+                <div><dt class="text-ink3" data-i18n>Прогноза за 8 ч</dt><dd data-f="proj" class="text-lg font-semibold">--</dd></div>
               </dl>
             </div>
           </div>
 
           <p id="safe-time" class="mt-6 rounded-xl bg-panel px-4 py-3 ring-1 ring-line">—</p>
           <div class="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm text-ink2">
-            <span>Измерено време <span id="dose-elapsed" class="tabular-nums text-ink">00:00</span></span>
-            <button id="dose-reset" class="btn">Нулирай сесията</button>
+            <span><span data-i18n>Измерено време</span> <span id="dose-elapsed" class="tabular-nums text-ink">00:00</span></span>
+            <button id="dose-reset" class="btn" data-i18n>Нулирай сесията</button>
           </div>
 
           <div class="mt-10">
-            <h2 class="font-medium">Колко време е безопасно</h2>
-            <p class="mb-3 text-sm text-ink3">Допустимо време на ден при постоянно ниво. Редът с текущото ниво е отбелязан.</p>
+            <h2 class="font-medium" data-i18n>Колко време е безопасно</h2>
+            <p class="mb-3 text-sm text-ink3" data-i18n>Допустимо време на ден при постоянно ниво. Редът с текущото ниво е отбелязан.</p>
             <div class="overflow-x-auto rounded-2xl bg-panel ring-1 ring-line">
               <table class="w-full text-left text-sm">
-                <thead class="text-ink3"><tr class="border-b border-line"><th class="px-4 py-2.5 font-medium">Ниво</th><th class="px-4 py-2.5 font-medium">Пример</th><th class="px-4 py-2.5 font-medium">NIOSH</th><th class="px-4 py-2.5 font-medium">OSHA</th></tr></thead>
+                <thead class="text-ink3"><tr class="border-b border-line"><th class="px-4 py-2.5 font-medium" data-i18n>Ниво</th><th class="px-4 py-2.5 font-medium" data-i18n>Пример</th><th class="px-4 py-2.5 font-medium">NIOSH</th><th class="px-4 py-2.5 font-medium">OSHA</th></tr></thead>
                 <tbody id="dose-table" class="tabular-nums"></tbody>
               </table>
             </div>
@@ -310,14 +372,14 @@
         <!-- ============ ЗАПИСИ ============ -->
         <section data-section="records" hidden>
           <div class="mb-8">
-            <h1 class="text-3xl font-semibold tracking-tight">Записи</h1>
-            <p class="mt-1 text-ink2">Запази измерване и виж отчет за него: средни нива, доза, време над праг.</p>
+            <h1 class="text-3xl font-semibold tracking-tight" data-i18n>Записи</h1>
+            <p class="mt-1 text-ink2" data-i18n>Запази измерване и виж отчет за него: средни нива, източници, доза, време над праг.</p>
           </div>
 
           <div class="mb-8 rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
             <div id="rec-idle" class="flex flex-col gap-3 sm:flex-row">
-              <input id="rec-name" type="text" maxlength="200" placeholder="Име на записа, напр. „Спалня, нощ“" class="field">
-              <button id="rec-start" class="btn btn-danger shrink-0">● Започни запис</button>
+              <input id="rec-name" type="text" maxlength="200" data-i18n-attr="placeholder" placeholder="Име на записа, напр. „Спалня, нощ“" class="field">
+              <button id="rec-start" class="btn btn-danger shrink-0" data-i18n>● Започни запис</button>
             </div>
             <div id="rec-active" hidden class="flex flex-wrap items-center justify-between gap-3">
               <div class="flex min-w-0 items-center gap-3">
@@ -325,14 +387,14 @@
                 <span id="rec-label" class="truncate font-medium"></span>
                 <span id="rec-time" class="tabular-nums text-ink2">00:00</span>
               </div>
-              <button id="rec-stop" class="btn">■ Спри записа</button>
+              <button id="rec-stop" class="btn" data-i18n>■ Спри записа</button>
             </div>
-            <p class="mt-3 text-sm text-ink3">Всяка секунда се пазят LAeq, LAFmax и LAFmin, LCeq, LZeq и пикът.</p>
+            <p class="mt-3 text-sm text-ink3" data-i18n>Всяка секунда се пазят LAeq, LAFmax и LAFmin, LCeq, LZeq, пикът и разпознатият източник.</p>
           </div>
 
           <div class="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
             <div>
-              <h2 class="mb-3 text-sm font-medium text-ink2">Всички записи</h2>
+              <h2 class="mb-3 text-sm font-medium text-ink2" data-i18n>Всички записи</h2>
               <div id="list" class="space-y-1.5"></div>
             </div>
             <div id="report" class="min-w-0"></div>
@@ -346,21 +408,21 @@
                   <dl data-f="meta" class="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm"></dl>
                 </div>
                 <div class="flex flex-wrap gap-2 print:hidden">
-                  <button data-a="rename" class="btn">Преименувай</button>
-                  <button data-a="note" class="btn">Бележка</button>
+                  <button data-a="rename" class="btn" data-i18n>Преименувай</button>
+                  <button data-a="note" class="btn" data-i18n>Бележка</button>
                   <a data-a="csv" class="btn">CSV</a>
-                  <button data-a="print" class="btn">Печат</button>
-                  <button data-a="delete" class="btn text-red-300">Изтрий</button>
+                  <button data-a="print" class="btn" data-i18n>Печат</button>
+                  <button data-a="delete" class="btn text-crit-ink" data-i18n>Изтрий</button>
                 </div>
               </div>
               <p data-f="note" hidden class="whitespace-pre-line rounded-xl bg-panel px-4 py-3 text-ink2 ring-1 ring-line"></p>
-              <p data-f="empty" hidden class="text-ink2">Още няма измервания в този запис.</p>
+              <p data-f="empty" hidden class="text-ink2" data-i18n>Още няма измервания в този запис.</p>
 
               <div data-f="body" class="space-y-6">
                 <div class="flex items-center gap-4 rounded-2xl bg-panel p-4 ring-1 ring-line">
                   <span data-f="ref-icon" class="text-4xl leading-none" aria-hidden="true"></span>
                   <div>
-                    <div class="text-sm text-ink3">Средното ниво прилича на</div>
+                    <div class="text-sm text-ink3" data-i18n>Средното ниво прилича на</div>
                     <div data-f="ref-name" class="font-semibold"></div>
                     <div data-f="loudest" class="text-sm text-ink2"></div>
                   </div>
@@ -370,39 +432,43 @@
                 <p data-f="lowfreq" class="text-sm"></p>
 
                 <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
-                  <h3 class="font-medium">Ниво във времето</h3>
+                  <h3 class="font-medium" data-i18n>Ниво във времето</h3>
                   <p class="mb-3 flex flex-wrap gap-4 text-xs text-ink3">
-                    <span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-accent"></span>LAeq за секунда</span>
+                    <span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-accent"></span><span data-i18n>LAeq за секунда</span></span>
                     <span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-ink3"></span>LAFmax</span>
-                    <span class="flex items-center gap-1.5"><span class="h-2 w-3 rounded-sm bg-crit/30"></span>Аларма</span>
+                    <span class="flex items-center gap-1.5"><span class="h-2 w-3 rounded-sm bg-crit/30"></span><span data-i18n>Аларма</span></span>
                   </p>
                   <canvas data-f="timeline" class="h-60"></canvas>
                 </div>
 
                 <div class="grid gap-6 md:grid-cols-2">
                   <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
-                    <h3 class="mb-4 font-medium">Време над праг</h3>
+                    <h3 class="mb-4 font-medium" data-i18n>Време над праг</h3>
                     <div data-f="above" class="space-y-3 text-sm"></div>
                   </div>
                   <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
-                    <h3 class="font-medium">Разпределение на нивата</h3>
-                    <p class="mb-3 text-xs text-ink3">Процент от времето във всеки интервал от 2 dB.</p>
+                    <h3 class="font-medium" data-i18n>Разпределение на нивата</h3>
+                    <p class="mb-3 text-xs text-ink3" data-i18n>Процент от времето във всеки интервал от 2 dB.</p>
                     <canvas data-f="histogram" class="h-48"></canvas>
                   </div>
-                </div>
-
-                <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
-                  <h3 class="font-medium">Шумова доза</h3>
-                  <p class="mb-4 text-xs text-ink3">От едносекундните LAeq; нивата под 80 dB не се броят.</p>
-                  <div data-f="dose" class="grid gap-6 sm:grid-cols-2"></div>
+                  <div data-f="sources-box" class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
+                    <h3 class="font-medium" data-i18n>Какво се е чувало</h3>
+                    <p class="mb-4 text-xs text-ink3" data-i18n>Дял от времето по разпознат източник.</p>
+                    <div data-f="sources" class="space-y-3"></div>
+                  </div>
+                  <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
+                    <h3 class="font-medium" data-i18n>Шумова доза</h3>
+                    <p class="mb-4 text-xs text-ink3" data-i18n>От едносекундните LAeq; нивата под 80 dB не се броят.</p>
+                    <div data-f="dose" class="space-y-5"></div>
+                  </div>
                 </div>
               </div>
 
               <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
-                <h3 class="mb-3 font-medium">Събития от алармата</h3>
+                <h3 class="mb-3 font-medium" data-i18n>Събития от алармата</h3>
                 <div class="overflow-x-auto">
                   <table class="w-full text-left text-sm">
-                    <thead class="text-ink3"><tr><th class="py-1.5 pr-4 font-medium">Начало</th><th class="py-1.5 pr-4 font-medium">Продължение</th><th class="py-1.5 pr-4 font-medium">Праг</th><th class="py-1.5 font-medium">Макс.</th></tr></thead>
+                    <thead class="text-ink3"><tr><th class="py-1.5 pr-4 font-medium" data-i18n>Начало</th><th class="py-1.5 pr-4 font-medium" data-i18n>Продължение</th><th class="py-1.5 pr-4 font-medium" data-i18n>Праг</th><th class="py-1.5 font-medium" data-i18n>Макс.</th></tr></thead>
                     <tbody data-f="events" class="divide-y divide-line tabular-nums"></tbody>
                   </table>
                 </div>
@@ -414,37 +480,37 @@
         <!-- ============ АЛАРМА ============ -->
         <section data-section="alarm" hidden>
           <div class="mb-8">
-            <h1 class="text-3xl font-semibold tracking-tight">Аларма</h1>
-            <p class="mt-1 text-ink2">Сигнал, когато шумът остане над прага. Всяко превишаване се записва.</p>
+            <h1 class="text-3xl font-semibold tracking-tight" data-i18n>Аларма</h1>
+            <p class="mt-1 text-ink2" data-i18n>Сигнал, когато шумът остане над прага. Всяко превишаване се записва.</p>
           </div>
           <div class="grid gap-6 lg:grid-cols-2">
             <div class="space-y-5 rounded-2xl bg-panel p-5 ring-1 ring-line">
               <label class="flex items-center justify-between gap-3">
                 <span>
-                  <span class="block font-medium">Аларма</span>
-                  <span class="text-sm text-ink3">Следи LAF – A-претегляне, бърз отклик.</span>
+                  <span class="block font-medium" data-i18n>Аларма</span>
+                  <span class="text-sm text-ink3" data-i18n>Следи LAF – A-претегляне, бърз отклик.</span>
                 </span>
                 <input id="alarm-enabled" type="checkbox" class="h-5 w-5 accent-accent">
               </label>
               <div class="grid grid-cols-2 gap-3">
                 <label class="space-y-1.5">
-                  <span class="text-sm text-ink2">Праг, dB</span>
+                  <span class="text-sm text-ink2" data-i18n>Праг, dB</span>
                   <input id="alarm-threshold" type="number" step="1" class="field">
                 </label>
                 <label class="space-y-1.5">
-                  <span class="text-sm text-ink2">Поне, секунди</span>
+                  <span class="text-sm text-ink2" data-i18n>Поне, секунди</span>
                   <input id="alarm-duration" type="number" step="0.5" min="0" class="field">
                 </label>
               </div>
-              <button id="alarm-save" class="btn btn-primary">Запази</button>
+              <button id="alarm-save" class="btn btn-primary" data-i18n>Запази</button>
               <div class="space-y-3 border-t border-line pt-5">
-                <label class="flex items-center gap-3"><input id="alarm-sound" type="checkbox" class="h-4 w-4 accent-accent"> Звуков сигнал в браузъра</label>
-                <button id="alarm-notify" hidden class="btn">Разреши известия</button>
-                <p class="text-sm text-ink3">Звукът започва след първото докосване на страницата – така работят браузърите. Известията действат само на localhost.</p>
+                <label class="flex items-center gap-3"><input id="alarm-sound" type="checkbox" class="h-4 w-4 accent-accent"> <span data-i18n>Звуков сигнал в браузъра</span></label>
+                <button id="alarm-notify" hidden class="btn" data-i18n>Разреши известия</button>
+                <p class="text-sm text-ink3" data-i18n>Звукът започва след първото докосване на страницата – така работят браузърите. Известията действат само на localhost.</p>
               </div>
             </div>
             <div class="rounded-2xl bg-panel p-5 ring-1 ring-line">
-              <h2 class="mb-3 font-medium">Последни събития</h2>
+              <h2 class="mb-3 font-medium" data-i18n>Последни събития</h2>
               <ul id="alarm-events" class="divide-y divide-line text-sm"></ul>
             </div>
           </div>
@@ -453,54 +519,74 @@
         <!-- ============ НАСТРОЙКИ ============ -->
         <section data-section="settings" hidden>
           <div class="mb-8">
-            <h1 class="text-3xl font-semibold tracking-tight">Настройки</h1>
-            <p class="mt-1 text-ink2">Микрофон, калибриране и клавиши.</p>
+            <h1 class="text-3xl font-semibold tracking-tight" data-i18n>Настройки</h1>
+            <p class="mt-1 text-ink2" data-i18n>Външен вид, микрофон, калибриране и клавиши.</p>
           </div>
           <div class="grid gap-6 lg:grid-cols-2">
             <div class="space-y-6">
+              <div class="space-y-4 rounded-2xl bg-panel p-5 ring-1 ring-line">
+                <h2 class="font-medium" data-i18n>Външен вид</h2>
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <span class="text-sm text-ink2" data-i18n>Тема</span>
+                  <div id="seg-theme" class="seg" role="group">
+                    <button data-value="system" data-i18n>Системна</button><button data-value="light" data-i18n>Светла</button><button data-value="dark" data-i18n>Тъмна</button>
+                  </div>
+                </div>
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <span class="text-sm text-ink2" data-i18n>Език</span>
+                  <div id="seg-lang" class="seg" role="group">
+                    <button data-value="bg">Български</button><button data-value="en">English</button>
+                  </div>
+                </div>
+              </div>
               <div class="space-y-3 rounded-2xl bg-panel p-5 ring-1 ring-line">
-                <h2 class="font-medium">Микрофон</h2>
-                <select id="device" class="field disabled:opacity-60" aria-label="Входно устройство"></select>
+                <h2 class="font-medium" data-i18n>Микрофон</h2>
+                <select id="device" class="field disabled:opacity-60" data-i18n-attr="aria-label" aria-label="Входно устройство"></select>
                 <p id="mode-label" class="text-sm text-ink3"></p>
               </div>
               <div class="space-y-4 rounded-2xl bg-panel p-5 ring-1 ring-line">
                 <div>
-                  <h2 class="font-medium">Калибриране</h2>
-                  <p class="text-sm text-ink3">Звуковата карта мери спрямо своя максимум (dBFS), затова към стойностите се добавя офсет. Типичният е за микрофоните в телефони и лаптопи.</p>
+                  <h2 class="font-medium" data-i18n>Калибриране</h2>
+                  <p class="text-sm text-ink3" data-i18n>Звуковата карта мери спрямо своя максимум (dBFS), затова към стойностите се добавя офсет. Типичният е за микрофоните в телефони и лаптопи.</p>
                 </div>
                 <label class="block space-y-1.5">
-                  <span class="text-sm text-ink2">Офсет, dB</span>
+                  <span class="text-sm text-ink2" data-i18n>Офсет, dB</span>
                   <div class="flex gap-2">
                     <input id="offset" type="number" step="0.5" class="field">
-                    <button id="offset-apply" class="btn btn-primary shrink-0">Приложи</button>
-                    <button id="offset-default" class="btn shrink-0">Типичен</button>
+                    <button id="offset-apply" class="btn btn-primary shrink-0" data-i18n>Приложи</button>
+                    <button id="offset-default" class="btn shrink-0"></button>
                   </div>
                 </label>
                 <div class="space-y-1.5 border-t border-line pt-4">
-                  <label for="ref-level" class="text-sm text-ink2">По еталонен шумомер</label>
-                  <p class="text-sm text-ink3">Сложи го до микрофона, пусни постоянен шум и въведи какво показва (в избраното претегляне). Офсетът се смята от последните 3 секунди.</p>
+                  <label for="ref-level" class="text-sm text-ink2" data-i18n>По еталонен шумомер</label>
+                  <p class="text-sm text-ink3" data-i18n>Сложи го до микрофона, пусни постоянен шум и въведи какво показва (в избраното претегляне). Офсетът се смята от последните 3 секунди.</p>
                   <div class="flex gap-2">
-                    <input id="ref-level" type="number" step="0.1" placeholder="напр. 72.5" class="field">
-                    <button id="calibrate" class="btn btn-primary shrink-0">Калибрирай</button>
+                    <input id="ref-level" type="number" step="0.1" data-i18n-attr="placeholder" placeholder="напр. 72.5" class="field">
+                    <button id="calibrate" class="btn btn-primary shrink-0" data-i18n>Калибрирай</button>
                   </div>
                 </div>
               </div>
             </div>
             <div class="space-y-6">
+              <div class="space-y-2 rounded-2xl bg-panel p-5 ring-1 ring-line">
+                <h2 class="font-medium" data-i18n>Разпознаване на звука</h2>
+                <p id="cls-status" class="text-sm text-ink2"></p>
+              </div>
               <div class="rounded-2xl bg-panel p-5 ring-1 ring-line">
-                <h2 class="mb-3 font-medium">Клавиши</h2>
+                <h2 class="mb-3 font-medium" data-i18n>Клавиши</h2>
                 <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-                  <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">Интервал</kbd></dt><dd class="text-ink2">старт и стоп</dd>
-                  <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">1</kbd>–<kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">6</kbd></dt><dd class="text-ink2">смяна на раздела</dd>
-                  <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">F</kbd></dt><dd class="text-ink2">цял екран</dd>
-                  <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">R</kbd></dt><dd class="text-ink2">нулиране на сесията</dd>
-                  <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">S</kbd></dt><dd class="text-ink2">снимка</dd>
+                  <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line" data-i18n>Интервал</kbd></dt><dd class="text-ink2" data-i18n>старт и стоп</dd>
+                  <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">1</kbd>–<kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">6</kbd></dt><dd class="text-ink2" data-i18n>смяна на раздела</dd>
+                  <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">F</kbd></dt><dd class="text-ink2" data-i18n>цял екран</dd>
+                  <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">R</kbd></dt><dd class="text-ink2" data-i18n>нулиране на сесията</dd>
+                  <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">S</kbd></dt><dd class="text-ink2" data-i18n>снимка</dd>
+                  <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">T</kbd></dt><dd class="text-ink2" data-i18n>смяна на темата</dd>
                 </dl>
               </div>
               <div class="rounded-2xl bg-panel p-5 ring-1 ring-line text-sm text-ink2">
-                <h2 class="mb-2 font-medium text-ink">За приложението</h2>
-                <p>Ориентировъчен шумомер – полезен е за сравнение и наблюдение, но не замества сертифициран уред.</p>
-                <p class="mt-2">Код: <a class="text-accent hover:underline" href="https://github.com/Krumqnkata/noise-measure-tool" target="_blank" rel="noopener">github.com/Krumqnkata/noise-measure-tool</a></p>
+                <h2 class="mb-2 font-medium text-ink" data-i18n>За приложението</h2>
+                <p data-i18n>Ориентировъчен шумомер – полезен е за сравнение и наблюдение, но не замества сертифициран уред.</p>
+                <p class="mt-2"><span data-i18n>Код:</span> <a class="text-accent hover:underline" href="https://github.com/Krumqnkata/noise-measure-tool" target="_blank" rel="noopener">github.com/Krumqnkata/noise-measure-tool</a></p>
               </div>
             </div>
           </div>
@@ -510,24 +596,25 @@
   </div>
 
   <!-- Долна лента (телефон) -->
-  <nav id="nav-bottom" class="bottom fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-line bg-bg/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden" aria-label="Раздели"></nav>
+  <nav id="nav-bottom" class="bottom fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-line bg-bg/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden" data-i18n-attr="aria-label" aria-label="Раздели"></nav>
 
   <!-- Цял екран -->
   <div id="big" hidden class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-bg p-6 text-center">
-    <button id="big-close" class="btn absolute right-4 top-4">Затвори</button>
+    <button id="big-close" class="btn absolute right-4 top-4" data-i18n>Затвори</button>
     <div id="big-metric" class="text-xl font-medium text-ink3">LAF</div>
     <div id="big-level" class="font-semibold leading-none" style="font-size:min(30vw, 42vh)">--</div>
     <div id="big-unit" class="text-3xl text-ink2">dB(A)</div>
     <div class="mt-4 flex items-center gap-2 text-xl"><span id="big-dot" class="h-3 w-3 rounded-full bg-ink3"></span><span id="big-status">—</span></div>
     <div id="big-ref" class="mt-4 text-2xl text-ink2 sm:text-3xl">—</div>
     <div class="mt-8 flex gap-8 text-lg text-ink3 sm:gap-12 sm:text-2xl">
-      <div>Мин <span id="big-min" class="font-semibold text-ink">--</span></div>
-      <div>Средно <span id="big-avg" class="font-semibold text-ink">--</span></div>
-      <div>Макс <span id="big-max" class="font-semibold text-ink">--</span></div>
+      <div><span data-i18n>Мин</span> <span id="big-min" class="font-semibold text-ink">--</span></div>
+      <div><span data-i18n>Средно</span> <span id="big-avg" class="font-semibold text-ink">--</span></div>
+      <div><span data-i18n>Макс</span> <span id="big-max" class="font-semibold text-ink">--</span></div>
     </div>
   </div>
 
   <script src="/static/common.js"></script>
+  <script src="/static/i18n.js"></script>
   <script src="/static/state.js"></script>
   <script src="/static/meter.js"></script>
   <script src="/static/analysis.js"></script>

@@ -51,6 +51,13 @@ def wait_for_server(base: str, timeout: float = 20) -> None:
     raise RuntimeError("Сървърът не тръгна")
 
 
+def new_page(browser, theme: str, lang: str, **options):
+    """Страница с фиксирани тема и език (иначе зависят от системата на този, който снима)."""
+    page = browser.new_page(**options)
+    page.add_init_script(f"localStorage.setItem('theme', '\"{theme}\"'); localStorage.setItem('lang', '\"{lang}\"');")
+    return page
+
+
 def show(page, section: str, wait: float = 2.0) -> None:
     page.evaluate(f"location.hash = '#{section}'")
     page.wait_for_timeout(wait * 1000)
@@ -77,7 +84,7 @@ def main() -> None:
 
             with sync_playwright() as p:
                 browser = p.chromium.launch(channel="chrome")
-                page = browser.new_page(viewport=DESKTOP, device_scale_factor=1)
+                page = new_page(browser, theme="dark", lang="bg", viewport=DESKTOP, device_scale_factor=1)
                 page.goto(base + "/#meter")
                 print("Събирам данни (35 s)…")
                 page.wait_for_timeout(35_000)
@@ -113,12 +120,24 @@ def main() -> None:
                 show(page, f"records/{session_id}", 3)
                 page.screenshot(path=OUT / "records.png", full_page=True)
 
-                phone = browser.new_page(viewport=PHONE, device_scale_factor=2, is_mobile=True, has_touch=True)
+                phone = new_page(browser, theme="dark", lang="bg", viewport=PHONE, device_scale_factor=2,
+                                 is_mobile=True, has_touch=True)
                 phone.goto(base + "/#meter")
                 phone.wait_for_timeout(6000)
                 phone.screenshot(path=OUT / "phone-meter.png")
                 show(phone, "analysis", 3)
                 phone.screenshot(path=OUT / "phone-analysis.png")
+
+                # Светла тема на английски
+                print("Светла тема, английски…")
+                light = new_page(browser, theme="light", lang="en", viewport=DESKTOP, device_scale_factor=1)
+                light.goto(base + "/#meter")
+                light.wait_for_timeout(12_000)
+                light.screenshot(path=OUT / "light-en-meter.png")
+                show(light, "analysis", 4)
+                light.screenshot(path=OUT / "light-en-analysis.png")
+                show(light, f"records/{session_id}", 3)
+                light.screenshot(path=OUT / "light-en-records.png", full_page=True)
                 browser.close()
         finally:
             server.terminate()

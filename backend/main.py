@@ -24,12 +24,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from audio import AudioEngine, sd
+from classifier import SoundClassifier
 from db import Database
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT / "static"
 CONFIG_PATH = ROOT / "config.json"
 DB_PATH = ROOT / "noise.db"
+MODEL_PATH = ROOT / "models" / "yamnet.tflite"
 
 SEND_INTERVAL = 0.05        # 20 кадъра в секунда към клиентите
 ALARM_RELEASE = 1.0         # колко секунди под прага, за да приключи алармата
@@ -121,7 +123,13 @@ class Alarm:
         self.max_level = -math.inf
 
 
+def api_error(status: int, code: str, **params) -> HTTPException:
+    """Грешка с код, който интерфейсът превежда на избрания език."""
+    return HTTPException(status, {"code": code, **params})
+
+
 engine: AudioEngine       # създават се в main()
+classifier: SoundClassifier
 db: Database
 config: dict
 alarm = Alarm()
@@ -131,7 +139,7 @@ clients: set[WebSocket] = set()
 
 def device_name() -> str | None:
     if engine.demo:
-        return "Демо сигнал"
+        return "demo"
     if sd is None:
         return None
     try:
@@ -149,6 +157,7 @@ def status_message() -> dict:
         "calibration_offset": config["calibration_offset"],
         "default_calibration": DEFAULT_CALIBRATION,
         "error": engine.error,
+        "classifier": classifier.status(),
         "recording": recording,
         "alarm": {
             "enabled": config["alarm_enabled"],
@@ -180,6 +189,7 @@ def flush_seconds() -> None:
 
 async def broadcaster() -> None:
     loop = asyncio.get_running_loop()
+    classifier_state = classifier.status()
     while True:
         started = loop.time()
         if engine.running:
@@ -189,6 +199,16 @@ async def broadcaster() -> None:
                 await broadcast(change)
             if clients:
                 await broadcast(engine.compute_frame())
+
+        # Разпознатите източници: последният отива към клиентите, всички – в записа
+        sounds = classifier.pop_results()
+        if sounds:
+            if recording:
+                db.add_sources(recording["id"], sounds)
+            await broadcast({"type": "sound", **sounds[-1]})
+        if classifier.status() != classifier_state:   # напр. моделът се е свалил
+            classifier_state = classifier.status()
+            await broadcast(status_message())
         await asyncio.sleep(max(0.0, SEND_INTERVAL - (loop.time() - started)))
 
 
@@ -232,9 +252,11 @@ async def lifespan(app: FastAPI):
                 print(f"Не може да се стартира записът: {exc2}")
         else:
             print(f"Не може да се стартира записът: {exc}")
+    classifier.start()
     task = asyncio.create_task(broadcaster())
     yield
     task.cancel()
+    classifier.stop()
     stop_audio()
 
 
@@ -288,7 +310,7 @@ async def get_status():
 @app.get("/api/devices")
 async def get_devices():
     if engine.demo:
-        return {"devices": [{"index": -1, "name": "Демо сигнал (симулация)", "hostapi": "", "default": True}]}
+        return {"devices": [{"index": -1, "name": "demo", "hostapi": "", "default": True}]}
     if sd is None:
         return {"devices": []}
     default_in = sd.default.device[0]
@@ -309,7 +331,7 @@ async def get_devices():
 @app.post("/api/device")
 async def set_device(body: DeviceIn):
     if engine.demo:
-        raise HTTPException(400, "В демо режим входното устройство не може да се сменя")
+        raise api_error(400, "demo_device")
     previous = config["device"]
     was_running = engine.running
     flush_seconds()
@@ -325,7 +347,7 @@ async def set_device(body: DeviceIn):
             except Exception:
                 pass
         await broadcast(status_message())
-        raise HTTPException(400, f"Устройството не може да се отвори: {exc}")
+        raise api_error(400, "device_open", error=str(exc))
     save_config(config)
     await broadcast(status_message())
     return status_message()
@@ -334,7 +356,7 @@ async def set_device(body: DeviceIn):
 @app.post("/api/calibration")
 async def set_calibration(body: CalibrationIn):
     if not math.isfinite(body.offset) or abs(body.offset) > 200:
-        raise HTTPException(400, "Офсетът трябва да е число между -200 и 200 dB")
+        raise api_error(400, "offset_range")
     config["calibration_offset"] = round(body.offset, 2)
     save_config(config)
     await broadcast(status_message())
@@ -347,7 +369,7 @@ async def start():
         engine.start()
     except Exception as exc:
         await broadcast(status_message())
-        raise HTTPException(400, f"Записът не може да започне: {exc}")
+        raise api_error(400, "start_failed", error=str(exc))
     await broadcast(status_message())
     return status_message()
 
@@ -388,7 +410,7 @@ async def recording_start(body: RecordingIn):
         try:
             engine.start()
         except Exception as exc:
-            raise HTTPException(400, f"Записът не може да започне: {exc}")
+            raise api_error(400, "start_failed", error=str(exc))
     start_recording(body.name)
     await broadcast(status_message())
     return status_message()
@@ -415,7 +437,7 @@ async def list_sessions():
 async def session_report(session_id: int):
     report = db.report(session_id)
     if report is None:
-        raise HTTPException(404, "Няма такъв запис")
+        raise api_error(404, "not_found")
     report["active"] = bool(recording and recording["id"] == session_id)
     return report
 
@@ -424,10 +446,10 @@ async def session_report(session_id: int):
 async def update_session(session_id: int, body: SessionUpdateIn):
     name = body.name.strip() if body.name is not None else None
     if name == "":
-        raise HTTPException(400, "Името не може да е празно")
+        raise api_error(400, "name_empty")
     note = body.note.strip() if body.note is not None else None
     if not db.update_session(session_id, name=name, note=note):
-        raise HTTPException(404, "Няма такъв запис")
+        raise api_error(404, "not_found")
     if name and recording and recording["id"] == session_id:
         recording["name"] = name
         await broadcast(status_message())
@@ -437,9 +459,9 @@ async def update_session(session_id: int, body: SessionUpdateIn):
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: int):
     if recording and recording["id"] == session_id:
-        raise HTTPException(400, "Първо спри записа")
+        raise api_error(400, "stop_first")
     if not db.delete_session(session_id):
-        raise HTTPException(404, "Няма такъв запис")
+        raise api_error(404, "not_found")
     return {"ok": True}
 
 
@@ -447,10 +469,10 @@ async def delete_session(session_id: int):
 async def session_csv(session_id: int):
     session = db.get_session(session_id)
     if session is None:
-        raise HTTPException(404, "Няма такъв запис")
+        raise api_error(404, "not_found")
     out = io.StringIO()
     writer = csv.writer(out)
-    writer.writerow(["време", "unix_t", "LAeq_1s", "LAFmax", "LAFmin", "LCeq_1s", "LZeq_1s", "LZpeak"])
+    writer.writerow(["time", "unix_t", "LAeq_1s", "LAFmax", "LAFmin", "LCeq_1s", "LZeq_1s", "LZpeak"])
     for r in db.measurements(session_id):
         writer.writerow([
             datetime.fromtimestamp(r["t"]).isoformat(sep=" ", timespec="seconds"),
@@ -483,13 +505,14 @@ async def websocket_endpoint(ws: WebSocket):
 
 
 def main() -> None:
-    global engine, db, config, CONFIG_PATH
+    global engine, classifier, db, config, CONFIG_PATH
     parser = argparse.ArgumentParser(description="Шумомер в реално време")
     parser.add_argument("--demo", action="store_true", help="симулиран сигнал вместо микрофон")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--db", default=str(DB_PATH), help="път до файла на базата (по подразбиране noise.db)")
     parser.add_argument("--config", default=str(CONFIG_PATH), help="път до настройките (по подразбиране config.json)")
+    parser.add_argument("--no-classifier", action="store_true", help="без разпознаване на източника на шума")
     args = parser.parse_args()
 
     # Конзолата на Windows може да е с кодиране без кирилица (напр. cp1252)
@@ -500,6 +523,7 @@ def main() -> None:
     config = load_config()
     db = Database(args.db)
     engine = AudioEngine(demo=args.demo, config=config)
+    classifier = SoundClassifier(engine, MODEL_PATH, enabled=not args.no_classifier)
     print(f"Шумомер: http://localhost:{args.port}" + ("  (демо режим)" if args.demo else ""))
     uvicorn.run(app, host=args.host, port=args.port)
 

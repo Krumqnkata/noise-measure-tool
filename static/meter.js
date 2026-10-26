@@ -30,8 +30,7 @@ function drawGauge() {
   ctx.lineWidth = band; ctx.strokeStyle = COLORS.track;
   ctx.beginPath(); ctx.arc(cx, cy, r - band / 2, G_START, G_START + G_SWEEP); ctx.stroke();
   ctx.lineWidth = 3;
-  const zones = [[0, 60], [60, 80], [80, 90], [90, 140]];
-  zones.forEach(([a, b], i) => {
+  [[0, 60], [60, 80], [80, 90], [90, 140]].forEach(([a, b], i) => {
     ctx.strokeStyle = LEVELS[i].color;
     ctx.beginPath(); ctx.arc(cx, cy, r + 4, gaugeAngle(a) + 0.01, gaugeAngle(b) - 0.01); ctx.stroke();
   });
@@ -46,7 +45,7 @@ function drawGauge() {
   for (let v = G_MIN; v <= G_MAX; v += 10) {
     const a = gaugeAngle(v), major = v % 20 === 0;
     const r1 = r - band - 5, r2 = r1 - (major ? 7 : 4);
-    ctx.strokeStyle = major ? '#5d7180' : '#3a4c59';
+    ctx.strokeStyle = major ? COLORS.tick : COLORS.tickMinor;
     ctx.lineWidth = major ? 1.5 : 1;
     ctx.beginPath(); ctx.moveTo(...polar(a, r1)); ctx.lineTo(...polar(a, r2)); ctx.stroke();
     if (major) { ctx.fillStyle = COLORS.axis; ctx.fillText(v, ...polar(a, r2 - 12)); }
@@ -67,8 +66,10 @@ const REF_ROWS = NOISE_REFERENCES.length;
 const refTop = (v) => ((G_MAX - Math.min(G_MAX, Math.max(G_MIN, v))) / 10 + 0.5) / REF_ROWS * 100;
 let refRow = null;
 
-(function buildRefScale() {
+function renderRefScale() {
   const ol = $('ref-scale');
+  ol.replaceChildren();
+  refRow = null;
   for (const ref of [...NOISE_REFERENCES].reverse()) {
     const li = document.createElement('li');
     li.dataset.db = ref.db;
@@ -79,7 +80,7 @@ let refRow = null;
       '<span hidden class="shrink-0 rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums"></span>';
     li.children[0].textContent = ref.db;
     li.children[1].textContent = ref.icon;
-    li.children[2].textContent = ref.name;
+    li.children[2].textContent = t(ref.name);
     ol.appendChild(li);
   }
   // Цветовете на лентата следват праговете 60/80/90 по позициите на редовете
@@ -87,7 +88,7 @@ let refRow = null;
   const [g, y, o, c] = LEVELS.map((l) => l.color);
   $('ref-bar').style.background = `linear-gradient(to bottom, ${c} 0%, ${c} ${p(85)}, ${o} ${p(85)},
     ${o} ${p(75)}, ${y} ${p(75)}, ${y} ${p(55)}, ${g} ${p(55)}, ${g} 100%)`;
-})();
+}
 
 function updateRefScale(v) {
   const top = refTop(v);
@@ -96,26 +97,26 @@ function updateRefScale(v) {
   const ref = noiseReference(v);
   if (refRow?.dataset.db !== String(ref.db)) {
     if (refRow) {
-      refRow.style.background = '';
+      refRow.classList.remove('bg-raised');
       refRow.children[3].hidden = true;
       refRow.children[2].classList.replace('text-ink', 'text-ink2');
       refRow.children[2].classList.remove('font-medium');
     }
     refRow = $('ref-scale').querySelector(`[data-db="${ref.db}"]`);
-    refRow.style.background = '#1e2d39';
+    refRow.classList.add('bg-raised');
     refRow.children[3].hidden = false;
     refRow.children[2].classList.replace('text-ink2', 'text-ink');
     refRow.children[2].classList.add('font-medium');
   }
-  // Етикетът е вътре в цветна плочка – текстът е тъмен, за да има контраст
+  // Етикетът е вътре в цветна плочка – цветът на текста се избира според нея
   const pill = refRow.children[3];
   pill.style.background = levelColor(v);
   pill.style.color = v >= 90 ? '#fff' : '#101a22';
   pill.textContent = v.toFixed(0);
 
   $('ref-icon').textContent = ref.icon;
-  $('ref-name').textContent = ref.name;
-  $('ref-db').textContent = `около ${ref.db} dB`;
+  $('ref-name').textContent = t(ref.name);
+  $('ref-db').textContent = t('около {db} dB', { db: ref.db });
 }
 
 // ---------- графика за последната минута ----------
@@ -124,13 +125,12 @@ attachTooltip(historyCv, (x) => {
   if (history.length < 2) return null;
   const { L, pw } = historyCv.box;
   const now = historyCv.now;
-  const t = now - (1 - (x - L) / pw) * HISTORY_MS;
+  const target = now - (1 - (x - L) / pw) * HISTORY_MS;
   let best = history[0];
-  for (const p of history) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
-  const bx = historyCv.x(best.t);
+  for (const p of history) if (Math.abs(p.t - target) < Math.abs(best.t - target)) best = p;
   return {
-    x: bx,
-    title: `преди ${Math.max(0, (now - best.t) / 1000).toFixed(0)} s`,
+    x: historyCv.x(best.t),
+    title: t('преди {s} s', { s: Math.max(0, (now - best.t) / 1000).toFixed(0) }),
     rows: [{ value: `${best.v.toFixed(1)} dB`, label: metricName(), color: COLORS.accent }],
     points: [{ y: historyCv.y(best.v), color: COLORS.accent }],
   };
@@ -145,13 +145,13 @@ function drawHistory() {
   const now = performance.now();
   const { lo, hi } = levelRange(history.map((p) => p.v));
   const y = drawLevelGrid(ctx, box, lo, hi);
-  const x = (t) => box.L + box.pw * (1 - (now - t) / HISTORY_MS);
+  const x = (tt) => box.L + box.pw * (1 - (now - tt) / HISTORY_MS);
   Object.assign(cv, { box, now, x, y });
 
   ctx.fillStyle = COLORS.axis; ctx.textBaseline = 'top';
   for (let s = 60; s >= 0; s -= 15) {
     ctx.textAlign = s === 0 ? 'right' : s === 60 ? 'left' : 'center';
-    ctx.fillText(s === 0 ? 'сега' : `−${s} s`, box.L + box.pw * (1 - s / 60), h - 16);
+    ctx.fillText(s === 0 ? t('сега') : `−${s} s`, box.L + box.pw * (1 - s / 60), h - 16);
   }
   drawSeries(ctx, history.map((p) => [x(p.t), y(p.v)]), COLORS.accent, COLORS.accentWash, box.T + box.ph);
   cv.tip.refresh();
@@ -203,7 +203,7 @@ function updateMeterReadout(m) {
   const text = v.toFixed(1);
   for (const id of ['level', 'side-level', 'top-level']) $(id).textContent = text;
   $('status-dot').style.background = info.color;
-  $('status-label').textContent = info.label;
+  $('status-label').textContent = t(info.label);
   $('dba').textContent = fmtDb(m.dba);
   $('dbc').textContent = fmtDb(m.dbc);
   $('peak-db').textContent = `${fmtDb(m.peak_db)} dB`;
@@ -219,8 +219,8 @@ function updateMeterReadout(m) {
     const ref = noiseReference(v);
     $('big-level').textContent = text;
     $('big-dot').style.background = info.color;
-    $('big-status').textContent = info.label;
-    $('big-ref').textContent = `${ref.icon} ${ref.name}`;
+    $('big-status').textContent = t(info.label);
+    $('big-ref').textContent = `${ref.icon} ${t(ref.name)}`;
     $('big-min').textContent = fmtDb(stats.min);
     $('big-avg').textContent = fmtDb(leq);
     $('big-max').textContent = fmtDb(stats.max);
@@ -244,14 +244,17 @@ setInterval(() => {
 
 const DOSE_TABLE_LEVELS = [80, 85, 88, 90, 91, 94, 95, 97, 100, 103, 105, 110, 115];
 let doseRow = null;
+let lastLas = NaN;
 
-(function buildDoseTable() {
+function renderDoseTable() {
   const tbody = $('dose-table');
+  tbody.replaceChildren();
+  doseRow = null;
   for (const L of DOSE_TABLE_LEVELS) {
     const tr = document.createElement('tr');
     tr.dataset.level = L;
     tr.className = 'border-b border-line last:border-0';
-    const cells = [`${L} dB`, noiseReference(L).name,
+    const cells = [`${L} dB`, t(noiseReference(L).name),
       fmtLongDuration(allowedSeconds(L, DOSE_STANDARDS.niosh)), fmtLongDuration(allowedSeconds(L, DOSE_STANDARDS.osha))];
     cells.forEach((text, i) => {
       const td = document.createElement('td');
@@ -261,9 +264,11 @@ let doseRow = null;
     });
     tbody.appendChild(tr);
   }
-})();
+  if (Number.isFinite(lastLas)) updateDose(lastLas);
+}
 
 function updateDose(las) {
+  lastLas = las;
   for (const [key, std] of Object.entries(DOSE_STANDARDS)) {
     const root = document.querySelector(`[data-std="${key}"]`);
     const f = (name) => root.querySelector(`[data-f="${name}"]`);
@@ -278,23 +283,23 @@ function updateDose(las) {
   const std = DOSE_STANDARDS.niosh;
   const el = $('safe-time');
   if (dose.niosh >= 100) {
-    el.textContent = '⚠ Дневната доза по NIOSH е надвишена – ползвай защита за слуха или намали шума.';
-    el.className = 'mt-6 rounded-xl bg-crit/15 px-4 py-3 text-red-200 ring-1 ring-crit/40';
+    el.textContent = `⚠ ${t('Дневната доза по NIOSH е надвишена – ползвай защита за слуха или намали шума.')}`;
+    el.className = 'mt-6 rounded-xl bg-crit/15 px-4 py-3 text-crit-ink ring-1 ring-crit/40';
   } else if (las < std.threshold) {
-    el.textContent = `✓ При ${las.toFixed(0)} dB(A) няма ограничение във времето – под ${std.threshold} dB не се брои.`;
+    el.textContent = `✓ ${t('При {L} dB(A) няма ограничение във времето – под {thr} dB не се брои.', { L: las.toFixed(0), thr: std.threshold })}`;
     el.className = 'mt-6 rounded-xl bg-panel px-4 py-3 ring-1 ring-line';
   } else {
     const remaining = (1 - dose.niosh / 100) * allowedSeconds(las, std);
-    el.textContent = `При ${las.toFixed(0)} dB(A) остават около ${fmtLongDuration(remaining)}, докато стигнеш дневния лимит по NIOSH.`;
-    el.className = 'mt-6 rounded-xl bg-warn/10 px-4 py-3 text-amber-100 ring-1 ring-warn/40';
+    el.textContent = t('При {L} dB(A) остават около {time}, докато стигнеш дневния лимит по NIOSH.', { L: las.toFixed(0), time: fmtLongDuration(remaining) });
+    el.className = 'mt-6 rounded-xl bg-warn/10 px-4 py-3 text-warn-ink ring-1 ring-warn/40';
   }
 
   // Отбелязваме реда от таблицата, най-близък отдолу до текущото ниво
   const row = [...DOSE_TABLE_LEVELS].reverse().find((L) => las >= L);
   if (doseRow?.dataset.level !== String(row)) {
-    if (doseRow) { doseRow.style.background = ''; doseRow.style.boxShadow = ''; }
+    if (doseRow) { doseRow.classList.remove('bg-raised'); doseRow.style.boxShadow = ''; }
     doseRow = row === undefined ? null : $('dose-table').querySelector(`[data-level="${row}"]`);
-    if (doseRow) { doseRow.style.background = '#1e2d39'; doseRow.style.boxShadow = 'inset 3px 0 0 #3987e5'; }
+    if (doseRow) { doseRow.classList.add('bg-raised'); doseRow.style.boxShadow = `inset 3px 0 0 ${COLORS.accent}`; }
   }
 }
 
@@ -328,9 +333,10 @@ function closeBig() {
 document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) closeBig(); });
 
 // ---------- снимка (PNG) ----------
+// Картинката винаги е в тъмен стил – така изглежда добре навсякъде, където се сподели.
 
 function snapshot() {
-  if (!latest) { showError('Още няма измерване'); return; }
+  if (!latest) { showError(t('Още няма измерване.')); return; }
   const W = 1200, H = 630;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
@@ -346,9 +352,9 @@ function snapshot() {
 
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#a7b6c2'; ctx.font = font(28, 600);
-  ctx.fillText('Шумомер', 60, 50);
+  ctx.fillText(t('Шумомер'), 60, 50);
   ctx.textAlign = 'right'; ctx.font = font(24);
-  ctx.fillText(new Date().toLocaleString('bg-BG'), W - 60, 54);
+  ctx.fillText(new Date().toLocaleString(locale()), W - 60, 54);
 
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = '#ecf1f4'; ctx.font = font(210, 600);
@@ -363,14 +369,15 @@ function snapshot() {
   ctx.fillStyle = info.color;
   ctx.beginPath(); ctx.arc(72, 378, 10, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#ecf1f4'; ctx.font = font(32, 500);
-  ctx.fillText(info.label, 96, 390);
+  ctx.fillText(t(info.label), 96, 390);
   ctx.fillStyle = '#a7b6c2'; ctx.font = font(36);
-  ctx.fillText(`${ref.icon}  ${ref.name}`, 60, 450);
+  const source = lastSound ? `   ·   ${soundCategory(lastSound.category).icon}  ${t(soundCategory(lastSound.category).name)}` : '';
+  ctx.fillText(`${ref.icon}  ${t(ref.name)}${source}`, 60, 450);
 
   const cells = [['Мин', stats.min], ['Средно', leq], ['Макс', stats.max], ['Пик', latest.peak_db]];
   cells.forEach(([label, val], i) => {
     const x = 60 + i * 270;
-    ctx.fillStyle = '#7a8d9b'; ctx.font = font(24); ctx.fillText(label, x, 520);
+    ctx.fillStyle = '#7a8d9b'; ctx.font = font(24); ctx.fillText(t(label), x, 520);
     ctx.fillStyle = '#ecf1f4'; ctx.font = font(42, 600); ctx.fillText(fmtDb(val), x, 570);
   });
 
@@ -383,9 +390,9 @@ function snapshot() {
     const pts = history.map((p) => [bx + bw * ((p.t - t0) / Math.max(1, t1 - t0)), by + bh * (1 - (p.v - lo) / (hi - lo))]);
     ctx.beginPath();
     pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-    ctx.strokeStyle = COLORS.accent; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.stroke();
+    ctx.strokeStyle = '#3987e5'; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.stroke();
     ctx.fillStyle = '#7a8d9b'; ctx.font = font(20); ctx.textAlign = 'right';
-    ctx.fillText('последната минута', bx + bw, by + bh + 30);
+    ctx.fillText(t('последната минута'), bx + bw, by + bh + 30);
   }
 
   c.toBlob((blob) => {

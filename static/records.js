@@ -6,6 +6,8 @@ let currentSession = null;
 let report = null;
 let reportCharts = null;
 
+const deviceLabel = (name) => (name === 'demo' || name === 'Демо сигнал' ? t('Демо сигнал') : name);
+
 function onRecordingStatus(rec) {
   recording = rec;
   $('rec-idle').hidden = !!rec;
@@ -17,14 +19,16 @@ function onRecordingStatus(rec) {
 
 function updateRecordingTime() {
   if (!recording) return;
-  const t = fmtDuration(Date.now() / 1000 - recording.started_at);
-  $('rec-time').textContent = t;
-  $('side-rec-time').textContent = t;
+  const tt = fmtDuration(Date.now() / 1000 - recording.started_at);
+  $('rec-time').textContent = tt;
+  $('side-rec-time').textContent = tt;
 }
 setInterval(updateRecordingTime, 1000);
 
 $('rec-start').addEventListener('click', () => action(async () => {
-  const res = await api('/api/recording/start', { name: $('rec-name').value });
+  const typed = $('rec-name').value.trim();
+  const name = typed || t('Запис {date}', { date: new Date().toLocaleString(locale(), { dateStyle: 'short', timeStyle: 'short' }) });
+  const res = await api('/api/recording/start', { name });
   $('rec-name').value = '';
   loadList();
   return res;
@@ -47,9 +51,12 @@ async function loadList() {
     return;
   }
   const list = $('list');
-  list.innerHTML = '';
+  list.replaceChildren();
   if (!sessions.length) {
-    list.innerHTML = '<p class="text-sm text-ink3">Още няма записи. Въведи име горе и натисни „Започни запис“.</p>';
+    const p = document.createElement('p');
+    p.className = 'text-sm text-ink3';
+    p.textContent = t('Още няма записи. Въведи име горе и натисни „Започни запис“.');
+    list.appendChild(p);
   }
   for (const s of sessions) {
     const a = document.createElement('a');
@@ -69,8 +76,8 @@ async function loadList() {
     name.textContent = s.name;
     leq.textContent = s.laeq === null ? '--' : `${s.laeq.toFixed(1)} dB`;
     date.textContent = fmtDateTime(s.started_at);
-    dur.textContent = s.active ? `записва, ${fmtDuration(s.duration)}` : fmtDuration(s.duration);
-    if (s.active) dur.classList.add('text-red-300');
+    dur.textContent = s.active ? t('записва, {time}', { time: fmtDuration(s.duration) }) : fmtDuration(s.duration);
+    if (s.active) dur.classList.add('text-crit-ink');
     list.appendChild(a);
   }
 }
@@ -82,7 +89,10 @@ async function openSession(id) {
   if (!id) {
     report = null;
     reportCharts = null;
-    $('report').innerHTML = '<div class="rounded-2xl border border-dashed border-line p-10 text-center text-ink3">Избери запис от списъка, за да видиш отчета.</div>';
+    const empty = document.createElement('div');
+    empty.className = 'rounded-2xl border border-dashed border-line p-10 text-center text-ink3';
+    empty.textContent = t('Избери запис от списъка, за да видиш отчета.');
+    $('report').replaceChildren(empty);
     loadList();
     return;
   }
@@ -102,7 +112,7 @@ function tile(label, value, hint) {
   d.className = 'bg-panel px-4 py-3';
   d.innerHTML = '<dt class="text-sm text-ink3"></dt><dd class="text-2xl font-semibold"></dd>';
   d.children[0].textContent = label;
-  d.children[0].title = hint || '';
+  d.children[0].title = hint ? t(hint) : '';
   d.children[1].textContent = fmtDb(value);
   return d;
 }
@@ -110,7 +120,7 @@ function tile(label, value, hint) {
 function metaItem(label, value) {
   const d = document.createElement('div');
   d.innerHTML = '<dt class="inline text-ink3"></dt> <dd class="inline text-ink2"></dd>';
-  d.children[0].textContent = label;
+  d.children[0].textContent = t(label);
   d.children[1].textContent = value;
   return d;
 }
@@ -118,16 +128,17 @@ function metaItem(label, value) {
 function renderReport() {
   const { session, summary } = report;
   const root = $('report-template').content.cloneNode(true);
+  applyI18n(root);
   const f = (name) => root.querySelector(`[data-f="${name}"]`);
   const a = (name) => root.querySelector(`[data-a="${name}"]`);
 
   f('name').textContent = session.name;
   f('meta').append(
     metaItem('Начало', fmtDateTime(session.started_at)),
-    metaItem('Продължителност', report.active ? `${fmtDuration(report.duration)}, записва се` : fmtDuration(report.duration)),
+    metaItem('Продължителност', report.active ? t('{time}, записва се', { time: fmtDuration(report.duration) }) : fmtDuration(report.duration)),
     metaItem('Офсет', `${session.calibration_offset} dB`),
   );
-  if (session.device) f('meta').append(metaItem('Микрофон', session.device));
+  if (session.device) f('meta').append(metaItem('Микрофон', deviceLabel(session.device)));
   if (session.note) {
     f('note').textContent = session.note;
     f('note').hidden = false;
@@ -146,8 +157,8 @@ function renderReport() {
   } else {
     const ref = noiseReference(summary.laeq);
     f('ref-icon').textContent = ref.icon;
-    f('ref-name').textContent = `${ref.name}, около ${ref.db} dB`;
-    f('loudest').textContent = `Най-шумно в ${fmtTime(summary.loudest_at)}: ${fmtDb(summary.lafmax)} dB`;
+    f('ref-name').textContent = t('{name}, около {db} dB', { name: t(ref.name), db: ref.db });
+    f('loudest').textContent = t('Най-шумно в {time}: {db} dB', { time: fmtTime(summary.loudest_at), db: fmtDb(summary.lafmax) });
 
     f('tiles').append(
       tile('LAeq', summary.laeq, 'Средно A-претеглено ниво за целия запис'),
@@ -167,9 +178,9 @@ function renderReport() {
 
     const diff = summary.lceq - summary.laeq;
     f('lowfreq').textContent = `LCeq − LAeq = ${diff.toFixed(1)} dB. ` + (diff > 15
-      ? 'Голямата разлика показва много нискочестотен шум – бучене, вентилация, бас.'
-      : 'Няма изразен нискочестотен шум.');
-    f('lowfreq').className = 'text-sm ' + (diff > 15 ? 'text-amber-200' : 'text-ink3');
+      ? t('Голямата разлика показва много нискочестотен шум – бучене, вентилация, бас.')
+      : t('Няма изразен нискочестотен шум.'));
+    f('lowfreq').className = 'text-sm ' + (diff > 15 ? 'text-warn-ink' : 'text-ink3');
 
     const total = summary.seconds;
     for (const row of report.above) {
@@ -179,12 +190,24 @@ function renderReport() {
         <div class="mb-1.5 flex justify-between gap-2"><span></span><span class="tabular-nums text-ink2"></span></div>
         <div class="h-2 overflow-hidden rounded-full bg-raised"><div class="h-full rounded-full"></div></div>`;
       const spans = el.querySelectorAll('span');
-      spans[0].textContent = `Над ${row.threshold} dB`;
+      spans[0].textContent = t('Над {thr} dB', { thr: row.threshold });
       spans[1].textContent = `${fmtDuration(row.seconds)} (${pct.toFixed(1)}%)`;
       const bar = el.querySelector('.h-full');
       bar.style.width = `${pct}%`;
       bar.style.background = levelColor(row.threshold + 0.1);
       f('above').appendChild(el);
+    }
+
+    if (report.sources.length) {
+      renderBars(f('sources'), report.sources.map((s) => ({
+        icon: soundCategory(s.category).icon, label: t(soundCategory(s.category).name),
+        value: `${Math.round(s.share * 100)}%`, pct: s.share * 100,
+      })));
+    } else {
+      const p = document.createElement('p');
+      p.className = 'text-sm text-ink3';
+      p.textContent = t('Няма данни – разпознаването не е било включено по време на записа.');
+      f('sources').appendChild(p);
     }
 
     for (const [key, std] of Object.entries(DOSE_STANDARDS)) {
@@ -195,23 +218,28 @@ function renderReport() {
         <div class="mt-1 text-3xl font-semibold"></div>
         <div class="mt-2 h-2 overflow-hidden rounded-full bg-raised"><div class="h-full rounded-full"></div></div>
         <div class="mt-2 text-sm text-ink3"></div>`;
-      el.children[0].textContent = `${std.label}: ${std.criterion} dB за 8 ч, през ${std.exchange} dB`;
+      el.children[0].textContent = t('{label}: {crit} dB за 8 ч, през {ex} dB', { label: std.label, crit: std.criterion, ex: std.exchange });
       el.children[1].textContent = fmtPct(d.dose);
       const bar = el.children[2].firstElementChild;
       bar.style.width = `${Math.min(100, d.dose)}%`;
       bar.style.background = doseColor(d.dose);
-      el.children[3].textContent = `TWA ${d.twa === null ? '--' : `${fmtDb(d.twa)} dB`}, прогноза за 8 ч ${d.projected.toFixed(0)}%`;
+      el.children[3].textContent = t('TWA {twa}, прогноза за 8 ч {proj}%', {
+        twa: d.twa === null ? '--' : `${fmtDb(d.twa)} dB`, proj: d.projected.toFixed(0),
+      });
       f('dose').appendChild(el);
     }
   }
 
   const tbody = f('events');
   if (!report.events.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="py-2 text-ink3">Няма събития в този запис.</td></tr>';
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="4" class="py-2 text-ink3"></td>';
+    tr.firstElementChild.textContent = t('Няма събития в този запис.');
+    tbody.appendChild(tr);
   }
   for (const e of [...report.events].reverse()) {
     const tr = document.createElement('tr');
-    const dur = e.ended_at ? fmtDuration(e.ended_at - e.started_at) : 'продължава';
+    const dur = e.ended_at ? fmtDuration(e.ended_at - e.started_at) : t('продължава');
     for (const text of [fmtDateTime(e.started_at), dur, `${e.threshold} dB`, `${fmtDb(e.max_level)} dB`]) {
       const td = document.createElement('td');
       td.className = 'py-2 pr-4';
@@ -221,8 +249,7 @@ function renderReport() {
     tbody.appendChild(tr);
   }
 
-  $('report').innerHTML = '';
-  $('report').appendChild(root);
+  $('report').replaceChildren(root);
 
   if (summary) {
     const draw = () => { if (reportCharts) { drawTimeline(); drawHistogram(); } };
@@ -238,20 +265,24 @@ function renderReport() {
   }
 }
 
+function redrawReport() {
+  if (reportCharts) { drawTimeline(); drawHistogram(); }
+}
+
 function pickTimeline(x) {
   const cv = reportCharts.timeline;
-  const { t } = report.series;
+  const ts = report.series.t;
   const target = cv.t0 + ((x - cv.box.L) / cv.box.pw) * (cv.t1 - cv.t0);
   let i = 0;
-  for (let k = 1; k < t.length; k++) if (Math.abs(t[k] - target) < Math.abs(t[i] - target)) i = k;
+  for (let k = 1; k < ts.length; k++) if (Math.abs(ts[k] - target) < Math.abs(ts[i] - target)) i = k;
   return {
-    x: cv.x(t[i]),
-    title: fmtTime(t[i]),
+    x: cv.x(ts[i]),
+    title: fmtTime(ts[i]),
     rows: [
       { value: `${fmtDb(report.series.laeq[i])} dB`, label: 'LAeq', color: COLORS.accent },
-      { value: `${fmtDb(report.series.lafmax[i])} dB`, label: 'LAFmax', color: '#7a8d9b' },
+      { value: `${fmtDb(report.series.lafmax[i])} dB`, label: 'LAFmax', color: COLORS.ink3 },
     ],
-    points: [{ y: cv.y(report.series.laeq[i]), color: COLORS.accent }, { y: cv.y(report.series.lafmax[i]), color: '#7a8d9b' }],
+    points: [{ y: cv.y(report.series.laeq[i]), color: COLORS.accent }, { y: cv.y(report.series.lafmax[i]), color: COLORS.ink3 }],
   };
 }
 
@@ -264,7 +295,7 @@ function drawTimeline() {
   const box = { L: 36, T: 8, pw: w - 44, ph: h - 30 };
   const t0 = session.started_at;
   const t1 = Math.max(session.ended_at || Date.now() / 1000, series.t[series.t.length - 1], t0 + 1);
-  const x = (t) => box.L + box.pw * ((t - t0) / (t1 - t0));
+  const x = (tt) => box.L + box.pw * ((tt - t0) / (t1 - t0));
   const { lo, hi } = levelRange([...series.laeq, ...series.lafmax]);
 
   ctx.fillStyle = 'rgba(208, 59, 59, 0.22)';
@@ -277,14 +308,14 @@ function drawTimeline() {
 
   ctx.fillStyle = COLORS.axis; ctx.textBaseline = 'top';
   for (let i = 0; i <= 4; i++) {
-    const t = t0 + ((t1 - t0) * i) / 4;
+    const tt = t0 + ((t1 - t0) * i) / 4;
     ctx.textAlign = i === 0 ? 'left' : i === 4 ? 'right' : 'center';
-    ctx.fillText(fmtTime(t), x(t), h - 16);
+    ctx.fillText(fmtTime(tt), x(tt), h - 16);
   }
 
   const pts = (values) => values.map((v, i) => [x(series.t[i]), y(v)]);
   ctx.globalAlpha = 0.6;
-  drawSeries(ctx, pts(series.lafmax), '#7a8d9b');
+  drawSeries(ctx, pts(series.lafmax), COLORS.ink3);
   ctx.globalAlpha = 1;
   drawSeries(ctx, pts(series.laeq), COLORS.accent, COLORS.accentWash, box.T + box.ph);
   cv.tip.refresh();
@@ -338,7 +369,7 @@ function drawHistogram() {
     const bx = box.L + slot * i + (slot - barW) / 2;
     const hgt = box.T + box.ph - y(p);
     if (hgt >= 1) {
-      ctx.fillStyle = cv.hover?.index === i ? '#5d9df0' : COLORS.accent;
+      ctx.fillStyle = cv.hover?.index === i ? COLORS.accentHover : COLORS.accent;
       ctx.beginPath(); ctx.roundRect(bx, y(p), barW, hgt, [Math.min(4, hgt), Math.min(4, hgt), 0, 0]); ctx.fill();
     }
     if (i % labelEvery === 0) { ctx.fillStyle = COLORS.axis; ctx.fillText(edges[i], box.L + slot * i, h - 14); }
@@ -346,7 +377,7 @@ function drawHistogram() {
 }
 
 async function renameSession() {
-  const name = prompt('Ново име на записа:', report.session.name);
+  const name = prompt(t('Ново име на записа:'), report.session.name);
   if (!name || !name.trim()) return;
   try {
     await api(`/api/sessions/${currentSession}`, { name: name.trim() }, 'PATCH');
@@ -357,7 +388,7 @@ async function renameSession() {
 }
 
 async function editNote() {
-  const note = prompt('Бележка към записа – място, източник на шума…', report.session.note || '');
+  const note = prompt(t('Бележка към записа – място, източник на шума…'), report.session.note || '');
   if (note === null) return;
   try {
     await api(`/api/sessions/${currentSession}`, { note }, 'PATCH');
@@ -368,7 +399,7 @@ async function editNote() {
 }
 
 async function deleteSession() {
-  if (!confirm(`Да изтрия ли „${report.session.name}“? Това не може да се върне.`)) return;
+  if (!confirm(t('Да изтрия ли „{name}“? Това не може да се върне.', { name: report.session.name }))) return;
   try {
     await api(`/api/sessions/${currentSession}`, undefined, 'DELETE');
     location.hash = '#records';
