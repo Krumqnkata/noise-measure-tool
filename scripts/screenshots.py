@@ -17,6 +17,7 @@ import time
 import urllib.request
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 from playwright.sync_api import sync_playwright
 
@@ -53,7 +54,7 @@ def wait_for_server(base: str, timeout: float = 20) -> None:
 
 def new_page(browser, theme: str, lang: str, **options):
     """Страница с фиксирани тема и език (иначе зависят от системата на този, който снима)."""
-    page = browser.new_page(**options)
+    page = browser.new_page(service_workers="block", **options)
     page.add_init_script(f"localStorage.setItem('theme', '\"{theme}\"'); localStorage.setItem('lang', '\"{lang}\"');")
     return page
 
@@ -63,16 +64,50 @@ def show(page, section: str, wait: float = 2.0) -> None:
     page.wait_for_timeout(wait * 1000)
 
 
+def seed_history(db_path: Path, days: int = 21) -> None:
+    """Три седмици минутни нива (тихи нощи, шумни вечери, трафик сутрин в делник) –
+    за таблото и прогнозата. Записва се направо в базата, преди сървърът да тръгне."""
+    sys.path.insert(0, str(ROOT / "backend"))
+    from db import Database
+
+    rng = np.random.default_rng(7)
+    db = Database(db_path)
+    end = time.time() - 3600
+    start = end - days * 86400
+    sid = db.create_session("Балкон: 3 седмици наблюдение", 120.0, "демо")
+    rows, sources = [], []
+    for t in np.arange(start, end, 60.0):
+        lt = time.localtime(t)
+        h = lt.tm_hour + lt.tm_min / 60
+        weekday = lt.tm_wday < 5
+        base = (33 + 16 * (7 <= h < 22) + 12 * np.exp(-((h - 8.5) / 1.5) ** 2) * weekday
+                + 9 * np.exp(-((h - 20.5) / 1.8) ** 2))
+        laeq = float(base + rng.normal(0, 2.5))
+        rows.append({"t": float(t), "laeq": laeq, "lafmax": laeq + 8, "lafmin": laeq - 5, "lceq": laeq + 6,
+                     "lzeq": laeq + 9, "lzpeak": laeq + 25, "laimax": laeq + 10, "lcpeak": laeq + 22})
+        category = ("silence" if laeq < 38 else "traffic" if 7 <= h < 10 or (weekday and 16 <= h < 19)
+                    else "people" if h >= 19 else "household")
+        sources.append({"t": float(t), "category": category, "score": 0.6})
+    db.add_measurements(sid, rows)
+    db.add_sources(sid, sources)
+    with db._conn:
+        db._conn.execute("UPDATE sessions SET started_at = ?, ended_at = ? WHERE id = ?", (start, end, sid))
+    db._conn.close()
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
+    for old in ("dose.png", "alarm.png", "phone-analysis.png", "light-en-records.png"):   # от по-стари версии
+        (OUT / old).unlink(missing_ok=True)
     port = free_port()
     base = f"http://127.0.0.1:{port}"
 
     # На Windows базата може да е заключена още миг след спирането на сървъра
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         config = Path(tmp) / "config.json"
-        # Алармата на 80 dB, за да има събития в отчета
+        # Алармата на 80 dB, за да има събития (и клипове) в отчета
         config.write_text(json.dumps({"alarm_enabled": True, "alarm_threshold": 80, "alarm_duration": 0.3}))
+        seed_history(Path(tmp) / "noise.db")
         server = subprocess.Popen(
             [sys.executable, str(ROOT / "backend" / "main.py"), "--demo", "--port", str(port),
              "--db", str(Path(tmp) / "noise.db"), "--config", str(config)],
@@ -80,7 +115,16 @@ def main() -> None:
         )
         try:
             wait_for_server(base)
+            while api(base, "/api/status")["classifier"]["state"] in ("starting", "downloading"):
+                time.sleep(0.5)
+            ml_ready = api(base, "/api/status")["classifier"]["state"] == "ready"
             session_id = api(base, "/api/recording/start", {"name": "Демо: стая през деня"})["recording"]["id"]
+            if ml_ready:
+                print("Свой звук и профил за аномалии…")
+                sound = api(base, "/api/custom-sounds", {"name": "Прахосмукачка", "icon": "🧹", "alert": False})["sounds"][-1]
+                for _ in range(3):
+                    api(base, f"/api/custom-sounds/{sound['id']}/examples", {"seconds": 4})
+                api(base, "/api/anomaly/learn", {"name": "Стаята през деня", "minutes": 0.5})
 
             with sync_playwright() as p:
                 browser = p.chromium.launch(channel="chrome")
@@ -107,10 +151,16 @@ def main() -> None:
                 page.check("#spec-hold")
                 page.wait_for_timeout(4000)
                 page.screenshot(path=OUT / "analysis.png")
-                show(page, "dose")
-                page.screenshot(path=OUT / "dose.png")
-                show(page, "alarm")
-                page.screenshot(path=OUT / "alarm.png")
+                show(page, "norms")
+                page.screenshot(path=OUT / "norms.png", full_page=True)
+                print("RT60…")
+                show(page, "room", 1)
+                page.click("#rt-start")
+                page.wait_for_function("document.getElementById('rt-value').textContent !== '--'", timeout=30_000)
+                page.wait_for_timeout(500)
+                page.screenshot(path=OUT / "room.png", full_page=True)
+                show(page, "sounds", 4)
+                page.screenshot(path=OUT / "sounds.png", full_page=True)
                 show(page, "settings")
                 page.screenshot(path=OUT / "settings.png")
 
@@ -119,14 +169,22 @@ def main() -> None:
                     {"note": "Демо запис: разговор, прахосмукачка и няколко силни удара."}, "PATCH")
                 show(page, f"records/{session_id}", 3)
                 page.screenshot(path=OUT / "records.png", full_page=True)
+                show(page, "records/dashboard", 3)
+                page.screenshot(path=OUT / "dashboard.png", full_page=True)
+
+                report = new_page(browser, theme="light", lang="bg", viewport={"width": 900, "height": 1270},
+                                  device_scale_factor=1)
+                report.goto(f"{base}/report/{session_id}")
+                report.wait_for_timeout(3000)
+                report.screenshot(path=OUT / "report.png")
 
                 phone = new_page(browser, theme="dark", lang="bg", viewport=PHONE, device_scale_factor=2,
                                  is_mobile=True, has_touch=True)
                 phone.goto(base + "/#meter")
                 phone.wait_for_timeout(6000)
                 phone.screenshot(path=OUT / "phone-meter.png")
-                show(phone, "analysis", 3)
-                phone.screenshot(path=OUT / "phone-analysis.png")
+                show(phone, "norms", 3)
+                phone.screenshot(path=OUT / "phone-norms.png")
 
                 # Светла тема на английски
                 print("Светла тема, английски…")
@@ -136,8 +194,8 @@ def main() -> None:
                 light.screenshot(path=OUT / "light-en-meter.png")
                 show(light, "analysis", 4)
                 light.screenshot(path=OUT / "light-en-analysis.png")
-                show(light, f"records/{session_id}", 3)
-                light.screenshot(path=OUT / "light-en-records.png", full_page=True)
+                show(light, "sounds", 3)
+                light.screenshot(path=OUT / "light-en-sounds.png", full_page=True)
                 browser.close()
         finally:
             server.terminate()

@@ -309,7 +309,7 @@ function renderReport() {
 
     if (report.sources.length) {
       renderBars(f('sources'), report.sources.map((s) => ({
-        icon: soundCategory(s.category).icon, label: t(soundCategory(s.category).name),
+        icon: soundCategory(s.category).icon, label: soundName(s.category),
         value: `${Math.round(s.share * 100)}%`, pct: s.share * 100,
       })));
     } else {
@@ -342,7 +342,7 @@ function renderReport() {
   const tbody = f('events');
   if (!report.events.length) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="5" class="py-2 text-ink3"></td>';
+    tr.innerHTML = '<td colspan="6" class="py-2 text-ink3"></td>';
     tr.firstElementChild.textContent = t('Няма събития в този запис.');
     tbody.appendChild(tr);
   }
@@ -350,12 +350,17 @@ function renderReport() {
     const tr = document.createElement('tr');
     const dur = e.ended_at ? fmtDuration(e.ended_at - e.started_at) : t('продължава');
     const sel = e.sel === null || e.sel === undefined ? '--' : `${fmtDb(e.sel)} dB`;
-    for (const text of [fmtDateTime(e.started_at), dur, `${e.threshold} dB`, `${fmtDb(e.max_level)} dB`, sel]) {
+    const kind = e.kind === 'alarm' || !e.kind ? `${t('Аларма')} > ${e.threshold} dB` : eventLabel(e);
+    for (const text of [fmtDateTime(e.started_at), dur, kind, `${fmtDb(e.max_level)} dB`, sel]) {
       const td = document.createElement('td');
       td.className = 'py-2 pr-4';
       td.textContent = text;
       tr.appendChild(td);
     }
+    const td = document.createElement('td');
+    td.className = 'py-2';
+    if (e.clip_id) td.appendChild(clipButton(e.clip_id));
+    tr.appendChild(td);
     tbody.appendChild(tr);
   }
 
@@ -404,7 +409,7 @@ function renderSleep(f, sleep) {
     spans[0].textContent = fmtTime(ev.at);
     const cat = ev.source ? soundCategory(ev.source) : null;
     spans[2].textContent = cat ? cat.icon : '';
-    spans[3].textContent = cat ? t(cat.name) : t('неразпознат източник');
+    spans[3].textContent = cat ? soundName(ev.source) : t('неразпознат източник');
     spans[4].textContent = `${ev.max.toFixed(1)} dB`;
     ol.appendChild(li);
   }

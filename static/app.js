@@ -8,6 +8,7 @@ const SECTIONS = [
   { id: 'analysis', label: 'Анализ', primary: true, icon: ICON('<path d="M4 20V11M9 20V5M14 20v-8M19 20V8"/>') },
   { id: 'norms', label: 'Норми', primary: true, icon: ICON('<path d="M12 3 5 6v5c0 4.4 3 8.2 7 10 4-1.8 7-5.6 7-10V6l-7-3Z"/><path d="M12 8v4l2.5 1.5"/>') },
   { id: 'records', label: 'Записи', primary: true, icon: ICON('<circle cx="6.5" cy="7" r="2.5"/><path d="M12 7h8M4 13h16M4 18h16"/>') },
+  { id: 'sounds', label: 'Звуци', icon: ICON('<path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 7v10M21 12h0"/>') },
   { id: 'room', label: 'Помещение', icon: ICON('<path d="M3 10.5 12 4l9 6.5V20H3v-9.5Z"/><path d="M8 20v-5h3M16 13c1.5 1 1.5 3 0 4M18.5 11.5c3 2 3 6 0 8"/>') },
   { id: 'settings', label: 'Настройки', icon: ICON('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>') },
 ];
@@ -75,6 +76,7 @@ function route() {
   if (changed) { window.scrollTo(0, 0); showError(''); }
   if (scrollTarget) $(scrollTarget).scrollIntoView();
   if (section === 'records') recordsOnShow(param);
+  if (section === 'sounds' && changed) soundsOnShow();
   setBadge('records', !!recording);
   setBadge('settings', alarmActive);
   dirty = true;
@@ -171,6 +173,7 @@ function setLanguage(next) {
   for (const btn of document.querySelectorAll('.toggle')) btn.textContent = running ? t('Стоп') : t('Старт');
   renderClassifierStatus(classifierStatus);
   if (lastSound) onSound(lastSound);
+  if (currentSectionId === 'sounds') soundsOnShow(); else renderCustomSounds();
   if (latest) updateMeterReadout(latest);
   setConn(connState);
   loadDevices();
@@ -217,6 +220,7 @@ function onStatus(s) {
   onRecordingStatus(s.recording);
   setBadge('records', !!s.recording);
   renderClassifierStatus(s.classifier);
+  soundsOnStatus(s);
 
   const a = s.alarm;
   $('alarm-enabled').checked = a.enabled;
@@ -375,11 +379,14 @@ async function loadEvents() {
     }
     for (const e of events) {
       const li = document.createElement('li');
-      li.className = 'flex flex-wrap justify-between gap-x-4 py-2';
-      li.innerHTML = '<span class="text-ink2"></span><span class="tabular-nums"></span>';
-      li.children[0].textContent = fmtDateTime(e.started_at);
+      li.className = 'flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2';
+      li.innerHTML = '<span class="min-w-0"><span class="block"></span><span class="text-xs text-ink3"></span></span><span class="flex items-center gap-3 tabular-nums"><span></span></span>';
+      li.querySelector('span span').textContent = eventLabel(e);
+      li.querySelectorAll('span span')[1].textContent = fmtDateTime(e.started_at);
       const dur = e.ended_at ? fmtDuration(e.ended_at - e.started_at) : t('продължава');
-      li.children[1].textContent = t('{max} dB за {time}', { max: fmtDb(e.max_level), time: dur });
+      const right = li.children[1];
+      right.firstElementChild.textContent = t('{max} dB за {time}', { max: fmtDb(e.max_level), time: dur });
+      if (e.clip_id) right.appendChild(clipButton(e.clip_id));
       ul.appendChild(li);
     }
   } catch { /* не е критично */ }
@@ -431,7 +438,10 @@ function connect() {
       analysisOnData(m);
     } else if (m.type === 'status') onStatus(m);
     else if (m.type === 'alarm') onAlarm(m);
-    else if (m.type === 'sound') onSound(m);
+    else if (m.type === 'sound') { onSound(m); soundsOnSound(m); }
+    else if (m.type === 'ml_event') onMlEvent(m);
+    else if (m.type === 'anomaly_learned') loadAnomaly();
+    else if (m.type === 'clip') { loadEvents(); if (currentSectionId === 'sounds') loadClips(); }
     else if (m.type === 'schedule_done') onScheduleDone(m);
   };
   ws.onclose = () => {

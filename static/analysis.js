@@ -27,7 +27,7 @@ let classifierStatus = { state: 'starting', error: null };
 function onSound(m) {
   lastSound = m;
   const cat = soundCategory(m.category);
-  const name = t(cat.name);
+  const name = soundName(m.category);
   const pct = `${Math.round(m.score * 100)}%`;
 
   $('src-icon').textContent = cat.icon;
@@ -39,15 +39,16 @@ function onSound(m) {
   $('cls-icon').textContent = cat.icon;
   $('cls-name').textContent = name;
   // Имената от модела са на английски (AudioSet); показваме ги като подсказка
-  $('cls-labels').textContent = `${t('Модел:')} ${m.labels.map((l) => `${l.name} ${Math.round(l.score * 100)}%`).join(', ')}`;
+  $('cls-labels').textContent = `${t('Модел:')} ${m.model === 'panns' ? 'PANNs CNN14' : 'YAMNet'} – ${m.labels.map((l) => `${l.name} ${Math.round(l.score * 100)}%`).join(', ')}`;
   renderBars($('cls-bars'), m.categories.map((c) => ({
-    icon: soundCategory(c.id).icon, label: t(soundCategory(c.id).name),
+    icon: soundCategory(c.id).icon, label: soundName(c.id),
     value: `${Math.round(c.score * 100)}%`, pct: c.score * 100,
   })));
 }
 
 function renderClassifierStatus(status) {
   classifierStatus = status;
+  renderModelChoice(status);
   const messages = {
     starting: 'Моделът се зарежда…',
     downloading: 'Свалям модела за разпознаване (~4 MB)…',
@@ -68,6 +69,28 @@ function renderClassifierStatus(status) {
     $('src-score').textContent = status.state === 'downloading' ? t('моделът се сваля…') : '';
   }
 }
+
+// Избор на модела (Настройки): бърз YAMNet или точен PANNs CNN14
+function renderModelChoice(status) {
+  const available = !['disabled', 'missing_runtime'].includes(status.state);
+  document.querySelectorAll('input[name=cls-model]').forEach((el) => {
+    el.checked = el.value === (status.choice || 'yamnet');
+    el.disabled = !available;
+  });
+  const acc = status.accurate || { state: 'idle' };
+  const messages = {
+    starting: 'Пускам точния модел…',
+    downloading: 'Свалям точния модел… {pct}%',
+    ready: 'Точният модел работи. PANNs CNN14 (Kong и др., 2020), тегла CC-BY-4.0. Собствените звуци и аномалиите ползват YAMNet.',
+    error: 'Точният модел не тръгна: {error}. Дотогава разпознава YAMNet.',
+  };
+  const el = $('cls-model-status');
+  el.hidden = status.choice !== 'panns' || !messages[acc.state];
+  if (!el.hidden) el.textContent = t(messages[acc.state], { pct: Math.round(acc.progress * 100), error: acc.error || '' });
+}
+$('cls-model').addEventListener('change', (e) => {
+  action(() => api('/api/classifier/model', { model: e.target.value }));
+});
 
 // ---------- форма на вълната ----------
 

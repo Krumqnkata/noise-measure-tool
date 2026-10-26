@@ -148,6 +148,7 @@
         <div id="alarm-banner" class="mb-5 hidden animate-pulse rounded-xl bg-crit px-4 py-3 font-semibold text-white">
           ⚠ <span id="alarm-text"></span>
         </div>
+        <div id="ml-banner" class="mb-5 hidden rounded-xl bg-warn px-4 py-3 font-semibold text-[#101a22]"></div>
         <div id="error" class="mb-5 hidden rounded-xl bg-crit/15 px-4 py-3 text-sm text-crit-ink ring-1 ring-crit/40"></div>
 
         <!-- ============ НИВО ============ -->
@@ -637,16 +638,88 @@
               </div>
 
               <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
-                <h3 class="mb-3 font-medium" data-i18n>Събития от алармата</h3>
+                <h3 class="mb-3 font-medium" data-i18n>Събития</h3>
                 <div class="overflow-x-auto">
                   <table class="w-full text-left text-sm">
-                    <thead class="text-ink3"><tr><th class="py-1.5 pr-4 font-medium" data-i18n>Начало</th><th class="py-1.5 pr-4 font-medium" data-i18n>Продължение</th><th class="py-1.5 pr-4 font-medium" data-i18n>Праг</th><th class="py-1.5 pr-4 font-medium" data-i18n>Макс.</th><th class="py-1.5 font-medium" title="Sound exposure level">SEL</th></tr></thead>
+                    <thead class="text-ink3"><tr><th class="py-1.5 pr-4 font-medium" data-i18n>Начало</th><th class="py-1.5 pr-4 font-medium" data-i18n>Продължение</th><th class="py-1.5 pr-4 font-medium" data-i18n>Вид</th><th class="py-1.5 pr-4 font-medium" data-i18n>Макс.</th><th class="py-1.5 pr-4 font-medium" title="Sound exposure level">SEL</th><th class="py-1.5 font-medium"><span class="sr-only" data-i18n>Клип</span></th></tr></thead>
                     <tbody data-f="events" class="divide-y divide-line tabular-nums"></tbody>
                   </table>
                 </div>
               </div>
             </div>
           </template>
+        </section>
+
+        <!-- ============ ЗВУЦИ (машинно обучение) ============ -->
+        <section data-section="sounds" hidden>
+          <div class="mb-8">
+            <h1 class="text-3xl font-semibold tracking-tight" data-i18n>Звуци и машинно обучение</h1>
+            <p class="mt-1 max-w-2xl text-ink2" data-i18n>Научи приложението на свои звуци, открий необичаен шум и чуй записаните събития.</p>
+          </div>
+          <p id="ml-unavailable" hidden class="mb-6 rounded-xl bg-raised px-4 py-3 text-sm text-ink2"></p>
+
+          <div class="grid gap-6 lg:grid-cols-2">
+            <div class="space-y-4 rounded-2xl bg-panel p-5 ring-1 ring-line">
+              <div>
+                <h2 class="font-medium" data-i18n>Мои звуци</h2>
+                <p class="text-sm text-ink3" data-i18n>Запиши 2–3 примера по няколко секунди – напр. лай на съседското куче, климатик, асансьор. После приложението ще го разпознава и може да те известява.</p>
+              </div>
+              <form id="cs-form" class="flex gap-2">
+                <input id="cs-icon" class="field w-14 text-center" maxlength="8" value="🔔" data-i18n-attr="aria-label" aria-label="Иконка">
+                <input id="cs-name" class="field" maxlength="60" required data-i18n-attr="placeholder" placeholder="напр. Кучето на съседа">
+                <button class="btn btn-primary shrink-0" data-i18n>Добави</button>
+              </form>
+              <ul id="cs-list" class="divide-y divide-line"></ul>
+              <p id="cs-live" class="rounded-lg bg-raised px-3 py-2 text-sm text-ink2"></p>
+            </div>
+
+            <div class="space-y-4 rounded-2xl bg-panel p-5 ring-1 ring-line">
+              <div>
+                <h2 class="font-medium" data-i18n>Откриване на аномалии</h2>
+                <p class="text-sm text-ink3" data-i18n>Приложението научава как звучи нормално – стая, машина, помпа – и предупреждава при нещо необичайно. Това е идеята на предиктивната поддръжка в индустрията.</p>
+              </div>
+              <form id="an-form" class="flex flex-wrap gap-2">
+                <input id="an-name" class="field min-w-[8rem] flex-1" maxlength="60" required data-i18n-attr="placeholder" placeholder="напр. Помпата в мазето">
+                <select id="an-minutes" class="field w-auto">
+                  <option value="1">1 min</option><option value="2" selected>2 min</option><option value="5">5 min</option><option value="10">10 min</option><option value="30">30 min</option>
+                </select>
+                <button class="btn btn-primary" data-i18n>Научи нормалното</button>
+              </form>
+              <div id="an-learning" hidden>
+                <div class="mb-1 flex justify-between text-sm"><span id="an-learning-name"></span><span id="an-learning-pct" class="tabular-nums text-ink2"></span></div>
+                <div class="h-2 overflow-hidden rounded-full bg-raised"><div id="an-learning-bar" class="h-full rounded-full bg-accent" style="width:0"></div></div>
+                <p class="mt-1 text-xs text-ink3" data-i18n>Докато се учи, нека звучи както обикновено.</p>
+              </div>
+              <ul id="an-list" class="divide-y divide-line text-sm"></ul>
+              <div>
+                <div class="mb-1 flex justify-between text-sm"><span class="text-ink3" data-i18n>Колко необичайно е сега</span><span id="an-score" class="font-semibold tabular-nums">--</span></div>
+                <div class="relative h-2.5 overflow-hidden rounded-full bg-raised">
+                  <div id="an-bar" class="h-full rounded-full" style="width:0"></div>
+                  <div class="absolute inset-y-0 w-0.5 bg-ink3" style="left:33.3%" title="1.0"></div>
+                </div>
+                <p id="an-status" class="mt-1 text-xs text-ink3"></p>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-6 space-y-4 rounded-2xl bg-panel p-5 ring-1 ring-line">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div class="max-w-xl">
+                <h2 class="font-medium" data-i18n>Аудио клипове</h2>
+                <p class="text-sm text-ink3" data-i18n>При събитие се пазят 3 секунди преди и 5 след него – за да чуеш какво е било и като доказателство. Файловете остават само на този компютър.</p>
+              </div>
+            </div>
+            <form id="clip-form" class="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+              <label class="flex items-center gap-2"><input id="clip-enabled" type="checkbox" class="h-4 w-4 accent-accent"> <span data-i18n>Пази клипове при:</span></label>
+              <label class="flex items-center gap-2"><input data-on="alarm" type="checkbox" class="h-4 w-4 accent-accent"> <span data-i18n>аларма</span></label>
+              <label class="flex items-center gap-2"><input data-on="anomaly" type="checkbox" class="h-4 w-4 accent-accent"> <span data-i18n>аномалия</span></label>
+              <label class="flex items-center gap-2"><input data-on="custom" type="checkbox" class="h-4 w-4 accent-accent"> <span data-i18n>мой звук</span></label>
+              <label class="flex items-center gap-2"><input id="clip-speech" type="checkbox" class="h-4 w-4 accent-accent"> <span data-i18n>без клипове, когато се чува говор</span></label>
+              <label class="flex items-center gap-2"><span data-i18n>до</span> <input id="clip-mb" type="number" min="10" step="10" class="field w-24"> MB</label>
+              <button class="btn" data-i18n>Запази</button>
+            </form>
+            <ul id="clip-list" class="divide-y divide-line text-sm"></ul>
+          </div>
         </section>
 
         <!-- ============ ПОМЕЩЕНИЕ ============ -->
@@ -798,6 +871,18 @@
               <div class="space-y-2 rounded-2xl bg-panel p-5 ring-1 ring-line">
                 <h2 class="font-medium" data-i18n>Разпознаване на звука</h2>
                 <p id="cls-status" class="text-sm text-ink2"></p>
+                <div id="cls-model" role="radiogroup" aria-labelledby="cls-model-title" class="space-y-3 border-t border-line pt-4">
+                  <p id="cls-model-title" class="text-sm text-ink2" data-i18n>Модел за разпознаване</p>
+                  <label class="flex items-start gap-3">
+                    <input type="radio" name="cls-model" value="yamnet" class="mt-1 h-4 w-4 accent-accent">
+                    <span><span class="block" data-i18n>Бърз – YAMNet</span><span class="block text-xs text-ink3" data-i18n>~16 MB, всяка секунда, лек за процесора.</span></span>
+                  </label>
+                  <label class="flex items-start gap-3">
+                    <input type="radio" name="cls-model" value="panns" class="mt-1 h-4 w-4 accent-accent">
+                    <span><span class="block" data-i18n>Точен – PANNs CNN14</span><span class="block text-xs text-ink3" data-i18n>~160 MB, сваля се при избор. По-точен (mAP 0.43 срещу 0.31 на AudioSet), обновява се на 2 s и товари повече процесора.</span></span>
+                  </label>
+                  <p id="cls-model-status" class="text-xs text-ink2" hidden></p>
+                </div>
               </div>
               <div class="rounded-2xl bg-panel p-5 ring-1 ring-line">
                 <h2 class="mb-3 font-medium" data-i18n>Клавиши</h2>
@@ -858,6 +943,7 @@
   <script src="/static/records.js"></script>
   <script src="/static/dashboard.js"></script>
   <script src="/static/room.js"></script>
+  <script src="/static/sounds.js"></script>
   <script src="/static/mic.js"></script>
   <script src="/static/app.js"></script>
 </body>

@@ -120,3 +120,13 @@ def test_migrates_old_database(tmp_path):
     version = db._conn.execute("PRAGMA user_version").fetchone()[0]
     Database(path)   # второ отваряне не трябва да мигрира наново
     assert db._conn.execute("PRAGMA user_version").fetchone()[0] == version
+
+
+def test_custom_sound_counts_recordings_not_windows(tmp_path):
+    db = Database(tmp_path / "noise.db")
+    sid = db.save_custom_sound({"name": "Лай", "icon": "🐕", "alert": False})
+    db.add_custom_examples(sid, [np.ones(1024)] * 7)      # един запис от 4 s → 7 прозореца
+    db.add_custom_examples(sid, [np.ones(1024)] * 7)
+    sound = db.custom_sounds()[0]
+    assert sound["examples"] == 14
+    assert sound["recordings"] == 2

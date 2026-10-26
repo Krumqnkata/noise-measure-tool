@@ -59,7 +59,48 @@ CREATE TABLE IF NOT EXISTS events (
     started_at REAL NOT NULL,
     ended_at   REAL,
     threshold  REAL NOT NULL,
-    max_level  REAL NOT NULL
+    max_level  REAL NOT NULL,
+    kind       TEXT NOT NULL DEFAULT 'alarm',   -- alarm / anomaly / custom
+    label      TEXT                             -- напр. името на собствения звук
+);
+
+-- Собствени звуци и примерите им (embedding на YAMNet, 1024 × float32)
+CREATE TABLE IF NOT EXISTS custom_sounds (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    icon       TEXT NOT NULL DEFAULT '🔔',
+    alert      INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS custom_examples (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    sound_id   INTEGER NOT NULL REFERENCES custom_sounds(id) ON DELETE CASCADE,
+    embedding  BLOB NOT NULL,
+    created_at REAL NOT NULL
+);
+
+-- Профили за откриване на аномалии: всички научени embeddings в един BLOB (n × 1024)
+CREATE TABLE IF NOT EXISTS anomaly_profiles (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    seconds    INTEGER NOT NULL,
+    threshold  REAL NOT NULL,
+    level_p99  REAL NOT NULL,
+    embeddings BLOB NOT NULL
+);
+
+-- Аудио клипове на събития (WAV файлове в папка clips/)
+CREATE TABLE IF NOT EXISTS clips (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    t          REAL NOT NULL,
+    session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+    event_id   INTEGER REFERENCES events(id) ON DELETE SET NULL,
+    reason     TEXT NOT NULL,
+    label      TEXT,
+    file       TEXT NOT NULL,
+    seconds    REAL NOT NULL,
+    bytes      INTEGER NOT NULL
 );
 """
 
@@ -210,6 +251,8 @@ class Database:
             lambda: (self._add_column("measurements", "laimax", "REAL"),
                      self._add_column("measurements", "lcpeak", "REAL")),
             lambda: self._add_column("sessions", "schedule_id", "INTEGER"),
+            lambda: (self._add_column("events", "kind", "TEXT NOT NULL DEFAULT 'alarm'"),
+                     self._add_column("events", "label", "TEXT")),
         ]
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
         with self._conn:
@@ -466,11 +509,12 @@ class Database:
 
     # --- събития ------------------------------------------------------------
 
-    def start_event(self, session_id: int | None, started_at: float, threshold: float, level: float) -> int:
+    def start_event(self, session_id: int | None, started_at: float, threshold: float, level: float,
+                    kind: str = "alarm", label: str | None = None) -> int:
         with self._lock, self._conn:
             cur = self._conn.execute(
-                "INSERT INTO events (session_id, started_at, threshold, max_level) VALUES (?, ?, ?, ?)",
-                (session_id, started_at, threshold, level),
+                "INSERT INTO events (session_id, started_at, threshold, max_level, kind, label) VALUES (?, ?, ?, ?, ?, ?)",
+                (session_id, started_at, threshold, level, kind, label),
             )
             return cur.lastrowid
 
@@ -481,14 +525,119 @@ class Database:
             )
 
     def events(self, session_id: int | None = None, limit: int | None = None) -> list[dict]:
-        sql = "SELECT * FROM events"
+        # Клипът към събитието (ако има) – за пускане направо от списъка
+        sql = "SELECT e.*, (SELECT MIN(c.id) FROM clips c WHERE c.event_id = e.id) AS clip_id FROM events e"
         params: list = []
         if session_id is not None:
-            sql += " WHERE session_id = ?"
+            sql += " WHERE e.session_id = ?"
             params.append(session_id)
-        sql += " ORDER BY started_at DESC"
+        sql += " ORDER BY e.started_at DESC"
         if limit:
             sql += " LIMIT ?"
             params.append(limit)
         with self._lock:
             return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    # --- собствени звуци -------------------------------------------------------
+
+    def custom_sounds(self) -> list[dict]:
+        with self._lock:
+            return [dict(r) for r in self._conn.execute(
+                # всички прозорци от един запис имат едно и също време → брой записи
+                """SELECT s.*, COUNT(e.id) AS examples, COUNT(DISTINCT e.created_at) AS recordings FROM custom_sounds s
+                   LEFT JOIN custom_examples e ON e.sound_id = s.id GROUP BY s.id ORDER BY s.created_at""")]
+
+    def custom_examples(self) -> dict[int, list[np.ndarray]]:
+        out: dict[int, list[np.ndarray]] = {}
+        with self._lock:
+            for r in self._conn.execute("SELECT sound_id, embedding FROM custom_examples"):
+                out.setdefault(r["sound_id"], []).append(np.frombuffer(r["embedding"], dtype=np.float32))
+        return out
+
+    def save_custom_sound(self, data: dict, sound_id: int | None = None) -> int:
+        with self._lock, self._conn:
+            if sound_id is None:
+                cur = self._conn.execute(
+                    "INSERT INTO custom_sounds (name, icon, alert, created_at) VALUES (?, ?, ?, ?)",
+                    (data["name"], data.get("icon") or "🔔", int(data.get("alert", False)), time.time()))
+                return cur.lastrowid
+            for field in ("name", "icon", "alert"):
+                if data.get(field) is not None:
+                    self._conn.execute(f"UPDATE custom_sounds SET {field} = ? WHERE id = ?",
+                                       (int(data[field]) if field == "alert" else data[field], sound_id))
+            return sound_id
+
+    def delete_custom_sound(self, sound_id: int) -> bool:
+        with self._lock, self._conn:
+            return self._conn.execute("DELETE FROM custom_sounds WHERE id = ?", (sound_id,)).rowcount > 0
+
+    def add_custom_examples(self, sound_id: int, embeddings: list[np.ndarray]) -> None:
+        now = time.time()
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "INSERT INTO custom_examples (sound_id, embedding, created_at) VALUES (?, ?, ?)",
+                [(sound_id, np.asarray(e, dtype=np.float32).tobytes(), now) for e in embeddings])
+
+    def clear_custom_examples(self, sound_id: int) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM custom_examples WHERE sound_id = ?", (sound_id,))
+
+    # --- профили за аномалии ----------------------------------------------------
+
+    def anomaly_profiles(self, with_data: bool = False) -> list[dict]:
+        cols = "*" if with_data else "id, name, created_at, seconds, threshold, level_p99"
+        with self._lock:
+            rows = [dict(r) for r in self._conn.execute(f"SELECT {cols} FROM anomaly_profiles ORDER BY created_at")]
+        for r in rows:
+            if with_data:
+                r["embeddings"] = np.frombuffer(r["embeddings"], dtype=np.float32).reshape(-1, 1024)
+        return rows
+
+    def save_anomaly_profile(self, name: str, seconds: int, profile: dict) -> int:
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO anomaly_profiles (name, created_at, seconds, threshold, level_p99, embeddings) VALUES (?, ?, ?, ?, ?, ?)",
+                (name, time.time(), seconds, profile["threshold"], profile["level_p99"],
+                 np.asarray(profile["embeddings"], dtype=np.float32).tobytes()))
+            return cur.lastrowid
+
+    def delete_anomaly_profile(self, profile_id: int) -> bool:
+        with self._lock, self._conn:
+            return self._conn.execute("DELETE FROM anomaly_profiles WHERE id = ?", (profile_id,)).rowcount > 0
+
+    # --- клипове -------------------------------------------------------------------
+
+    def add_clip(self, data: dict) -> int:
+        fields = ("t", "session_id", "event_id", "reason", "label", "file", "seconds", "bytes")
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                f"INSERT INTO clips ({', '.join(fields)}) VALUES ({', '.join('?' * len(fields))})",
+                tuple(data.get(f) for f in fields))
+            return cur.lastrowid
+
+    def clips(self, limit: int = 100) -> list[dict]:
+        with self._lock:
+            return [dict(r) for r in self._conn.execute("SELECT * FROM clips ORDER BY t DESC LIMIT ?", (limit,))]
+
+    def clip(self, clip_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM clips WHERE id = ?", (clip_id,)).fetchone()
+        return dict(row) if row else None
+
+    def delete_clip(self, clip_id: int) -> dict | None:
+        clip = self.clip(clip_id)
+        if clip:
+            with self._lock, self._conn:
+                self._conn.execute("DELETE FROM clips WHERE id = ?", (clip_id,))
+        return clip
+
+    def oldest_clips_over(self, max_bytes: int) -> list[dict]:
+        """Клиповете, които трябва да се изтрият, за да се спазят max_bytes (най-старите първо)."""
+        with self._lock:
+            rows = [dict(r) for r in self._conn.execute("SELECT id, file, bytes FROM clips ORDER BY t DESC")]
+        total, out = 0, []
+        for r in rows:
+            total += r["bytes"]
+            if total > max_bytes:
+                out.append(r)
+        return out

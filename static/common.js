@@ -91,7 +91,50 @@ const SOUND_CATEGORIES = {
   silence: { icon: '🔇', name: 'Тишина' },
   unknown: { icon: '❔', name: 'Не е ясно' },
 };
-const soundCategory = (id) => SOUND_CATEGORIES[id] || SOUND_CATEGORIES.unknown;
+// Собствените звуци идват като "custom:<id>"; имената им се зареждат от сървъра (sounds.js)
+let CUSTOM_SOUNDS = {};
+function soundCategory(id) {
+  if (String(id).startsWith('custom:')) {
+    const s = CUSTOM_SOUNDS[String(id).slice(7)];
+    return { icon: s?.icon || '🔔', name: s?.name || 'Мой звук', custom: true };
+  }
+  return SOUND_CATEGORIES[id] || SOUND_CATEGORIES.unknown;
+}
+// Името на категория за показване: собствените звуци не се превеждат
+const soundName = (id) => { const c = soundCategory(id); return c.custom ? c.name : t(c.name); };
+
+// Пускане на аудио клип; повторно натискане го спира
+let clipAudio = null;
+function playClip(clipId, button) {
+  if (clipAudio) {
+    const sameClip = clipAudio.dataset.clip === String(clipId);
+    clipAudio.pause();
+    clipAudio.button.textContent = '▶';
+    clipAudio = null;
+    if (sameClip) return;
+  }
+  const audio = new Audio(`/api/clips/${clipId}`);
+  audio.dataset.clip = clipId;
+  audio.button = button;
+  audio.onended = () => { button.textContent = '▶'; clipAudio = null; };
+  button.textContent = '■';
+  audio.play().catch(() => { button.textContent = '▶'; });
+  clipAudio = audio;
+}
+function clipButton(clipId) {
+  const b = document.createElement('button');
+  b.className = 'btn px-2 py-0.5 text-xs';
+  b.textContent = '▶';
+  b.title = t('Пусни клипа');
+  b.addEventListener('click', () => playClip(clipId, b));
+  return b;
+}
+// Как се показва събитие според вида му
+function eventLabel(e) {
+  if (e.kind === 'custom') return `🔔 ${e.label}`;
+  if (e.kind === 'anomaly') return `⚠ ${t('Аномалия')}: ${e.label}`;
+  return t('Аларма');
+}
 
 // Наредба № 6/2006, Приложение 2 – имената на териториите (табл. 2) и помещенията (табл. 1).
 // Числата идват от сървъра (/api/norms), за да има един източник.
@@ -199,6 +242,7 @@ function errorText(detail) {
     busy: 'Вече тече измерване – изчакай го.',
     no_impulse: 'Не долових плясък. Пляскай по-силно и по-близо до микрофона.',
     schedule_empty: 'Началото и краят на графика не може да съвпадат.',
+    classifier_not_ready: 'Разпознаването на звуци не работи – виж раздел Анализ.',
   };
   return t(messages[detail.code] || detail.code, detail);
 }

@@ -194,7 +194,7 @@ function renderSourcesByHour() {
     cell.innerHTML = '<div class="text-xs text-ink3"></div><div class="text-lg leading-tight" aria-hidden="true"></div>';
     cell.children[0].textContent = `${hour}:00`;
     cell.children[1].textContent = s ? soundCategory(s.category).icon : '·';
-    cell.title = s ? `${t(soundCategory(s.category).name)} – ${Math.round(s.share * 100)}%` : t('няма данни');
+    cell.title = s ? `${soundName(s.category)} – ${Math.round(s.share * 100)}%` : t('няма данни');
     box.appendChild(cell);
   }
 }

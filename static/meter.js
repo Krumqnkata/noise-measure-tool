@@ -372,7 +372,7 @@ function snapshot() {
   ctx.fillStyle = '#ecf1f4'; ctx.font = font(32, 500);
   ctx.fillText(t(info.label), 96, 390);
   ctx.fillStyle = '#a7b6c2'; ctx.font = font(36);
-  const source = lastSound ? `   ·   ${soundCategory(lastSound.category).icon}  ${t(soundCategory(lastSound.category).name)}` : '';
+  const source = lastSound ? `   ·   ${soundCategory(lastSound.category).icon}  ${soundName(lastSound.category)}` : '';
   ctx.fillText(`${ref.icon}  ${t(ref.name)}${source}`, 60, 450);
 
   const cells = [['Мин', stats.min], ['Средно', leq], ['Макс', stats.max], ['Пик', latest.peak_db]];

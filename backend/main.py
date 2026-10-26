@@ -29,6 +29,7 @@ from audio import SAMPLE_RATE, AudioEngine, sd
 from certs import ensure_certificate, local_addresses
 from classifier import SoundClassifier
 from db import Database
+from ml import MLManager
 from norms import all_norms
 from room import DECAY_SECONDS, measure_rt60
 from scheduler import active_schedule
@@ -37,7 +38,8 @@ ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT / "static"
 CONFIG_PATH = ROOT / "config.json"
 DB_PATH = ROOT / "noise.db"
-MODEL_PATH = ROOT / "models" / "yamnet.tflite"
+MODELS_DIR = ROOT / "models"
+CLIPS_DIR = ROOT / "clips"
 
 SEND_INTERVAL = 0.05        # 20 кадъра в секунда към клиентите
 ALARM_RELEASE = 1.0         # колко секунди под прага, за да приключи алармата
@@ -54,6 +56,12 @@ DEFAULT_CONFIG = {
     "alarm_enabled": False,
     "alarm_threshold": 85.0,
     "alarm_duration": 3.0,
+    "anomaly_profile": None,
+    "clips_enabled": True,
+    "clips_on": ["alarm", "anomaly", "custom"],
+    "clips_skip_speech": True,      # да не се пазят записи на разговори
+    "clips_max_mb": 200,
+    "classifier_model": "yamnet",   # или "panns" – по-точният, ~160 MB
 }
 
 
@@ -105,6 +113,7 @@ class Alarm:
                 self.active = True
                 session_id = recording["id"] if recording else None
                 self.event_id = db.start_event(session_id, self.over_since, threshold, self.max_level)
+                ml.save_clip("alarm", None, self.event_id)
                 return self.message()
         elif self.active:
             if self.under_since is None:
@@ -137,6 +146,7 @@ def api_error(status: int, code: str, **params) -> HTTPException:
 
 engine: AudioEngine       # създават се в main()
 classifier: SoundClassifier
+ml: MLManager
 db: Database
 config: dict
 alarm = Alarm()
@@ -182,6 +192,8 @@ def status_message() -> dict:
                    "name": engine.external},
         "error": engine.error,
         "classifier": classifier.status(),
+        "ml": ml.status(),
+        "clips": {k: config[k] for k in ("clips_enabled", "clips_on", "clips_skip_speech", "clips_max_mb")},
         "recording": recording,
         "alarm": {
             "enabled": config["alarm_enabled"],
@@ -234,6 +246,10 @@ async def broadcaster() -> None:
             if recording:
                 db.add_sources(recording["id"], sounds)
             await broadcast({"type": "sound", **sounds[-1]})
+        for message in ml.pop_messages():
+            if message["type"] == "anomaly_learned":
+                save_config(config)   # новият профил става активен
+            await broadcast(message)
         if classifier.status() != classifier_state:   # напр. моделът се е свалил
             classifier_state = classifier.status()
             await broadcast(status_message())
@@ -309,6 +325,7 @@ async def lifespan(app: FastAPI):
         else:
             print(f"Не може да се стартира записът: {exc}")
     classifier.start()
+    classifier.set_model(config["classifier_model"])
     task = asyncio.create_task(broadcaster())
     yield
     task.cancel()
@@ -341,6 +358,36 @@ class RecordingIn(BaseModel):
 class SessionUpdateIn(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     note: str | None = Field(default=None, max_length=2000)
+
+
+class CustomSoundIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=60)
+    icon: str | None = Field(default=None, max_length=8)
+    alert: bool | None = None
+
+
+class ExamplesIn(BaseModel):
+    seconds: float = Field(default=3, ge=1, le=10)
+
+
+class LearnIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    minutes: float = Field(ge=0.5, le=60)
+
+
+class ProfileIn(BaseModel):
+    id: int | None = None
+
+
+class ModelIn(BaseModel):
+    model: str
+
+
+class ClipSettingsIn(BaseModel):
+    enabled: bool
+    on: list[str]
+    skip_speech: bool
+    max_mb: float = Field(ge=10, le=10_000)
 
 
 class ScheduleIn(BaseModel):
@@ -542,6 +589,136 @@ async def recording_stop():
     return status_message()
 
 
+# --- собствени звуци, аномалии, клипове ----------------------------------------------
+
+def require_classifier() -> None:
+    if classifier.state != "ready":
+        raise api_error(400, "classifier_not_ready")
+
+
+@app.get("/api/custom-sounds")
+async def list_custom_sounds():
+    return {"sounds": db.custom_sounds()}
+
+
+@app.post("/api/custom-sounds")
+async def create_custom_sound(body: CustomSoundIn):
+    if not body.name:
+        raise api_error(400, "name_empty")
+    db.save_custom_sound(body.model_dump())
+    ml.reload_sounds()
+    return {"sounds": db.custom_sounds()}
+
+
+@app.patch("/api/custom-sounds/{sound_id}")
+async def update_custom_sound(sound_id: int, body: CustomSoundIn):
+    db.save_custom_sound(body.model_dump(), sound_id)
+    ml.reload_sounds()
+    return {"sounds": db.custom_sounds()}
+
+
+@app.delete("/api/custom-sounds/{sound_id}")
+async def delete_custom_sound(sound_id: int):
+    if not db.delete_custom_sound(sound_id):
+        raise api_error(404, "not_found")
+    ml.reload_sounds()
+    return {"sounds": db.custom_sounds()}
+
+
+@app.post("/api/custom-sounds/{sound_id}/examples")
+async def record_examples(sound_id: int, body: ExamplesIn):
+    """Записва примери: изчаква `seconds` секунди и взима embeddings от звука през това време."""
+    require_classifier()
+    if not engine.running:
+        raise api_error(400, "not_running")
+    await asyncio.sleep(body.seconds + 0.2)
+    audio = engine.recent_audio(body.seconds)
+    embeddings = await asyncio.to_thread(classifier.embed_audio, audio.astype(np.float64))
+    db.add_custom_examples(sound_id, embeddings)
+    ml.reload_sounds()
+    return {"sounds": db.custom_sounds(), "added": len(embeddings)}
+
+
+@app.delete("/api/custom-sounds/{sound_id}/examples")
+async def clear_examples(sound_id: int):
+    db.clear_custom_examples(sound_id)
+    ml.reload_sounds()
+    return {"sounds": db.custom_sounds()}
+
+
+@app.get("/api/anomaly")
+async def anomaly_state():
+    return {"profiles": db.anomaly_profiles(), **ml.status()}
+
+
+@app.post("/api/anomaly/learn")
+async def anomaly_learn(body: LearnIn):
+    require_classifier()
+    if not engine.running:
+        raise api_error(400, "not_running")
+    ml.start_learning(body.name.strip(), int(body.minutes * 60))
+    await broadcast(status_message())
+    return {"profiles": db.anomaly_profiles(), **ml.status()}
+
+
+@app.post("/api/anomaly/active")
+async def anomaly_active(body: ProfileIn):
+    ml.activate_profile(body.id)
+    save_config(config)
+    await broadcast(status_message())
+    return {"profiles": db.anomaly_profiles(), **ml.status()}
+
+
+@app.delete("/api/anomaly/{profile_id}")
+async def anomaly_delete(profile_id: int):
+    if config.get("anomaly_profile") == profile_id:
+        ml.activate_profile(None)
+        save_config(config)
+    if not db.delete_anomaly_profile(profile_id):
+        raise api_error(404, "not_found")
+    return {"profiles": db.anomaly_profiles(), **ml.status()}
+
+
+@app.get("/api/clips")
+async def list_clips(limit: int = 50):
+    return {"clips": db.clips(max(1, min(limit, 500)))}
+
+
+@app.get("/api/clips/{clip_id}")
+async def get_clip(clip_id: int):
+    clip = db.clip(clip_id)
+    if clip is None or not (CLIPS_DIR / clip["file"]).exists():
+        raise api_error(404, "not_found")
+    return FileResponse(CLIPS_DIR / clip["file"], media_type="audio/wav", filename=clip["file"])
+
+
+@app.delete("/api/clips/{clip_id}")
+async def delete_clip(clip_id: int):
+    if not ml.delete_clip(clip_id):
+        raise api_error(404, "not_found")
+    return {"clips": db.clips(50)}
+
+
+@app.post("/api/clips/settings")
+async def clip_settings(body: ClipSettingsIn):
+    config.update(clips_enabled=body.enabled, clips_skip_speech=body.skip_speech, clips_max_mb=body.max_mb,
+                  clips_on=[k for k in body.on if k in ("alarm", "anomaly", "custom")])
+    save_config(config)
+    await broadcast(status_message())
+    return status_message()
+
+
+@app.post("/api/classifier/model")
+async def classifier_model(body: ModelIn):
+    if body.model not in ("yamnet", "panns"):
+        raise api_error(400, "not_found")
+    config["classifier_model"] = body.model
+    save_config(config)
+    await asyncio.to_thread(classifier.set_model, body.model)
+    await broadcast(status_message())
+    return status_message()
+
+
 @app.get("/api/dashboard")
 async def dashboard(days: int = 30):
     return await asyncio.to_thread(db.dashboard, max(1, min(days, 365)))
@@ -714,7 +891,7 @@ async def service_worker():
 
 
 def main() -> None:
-    global engine, classifier, db, config, CONFIG_PATH
+    global engine, classifier, ml, db, config, CONFIG_PATH
     parser = argparse.ArgumentParser(description="Шумомер в реално време")
     parser.add_argument("--demo", action="store_true", help="симулиран сигнал вместо микрофон")
     parser.add_argument("--host", default="0.0.0.0")
@@ -734,7 +911,8 @@ def main() -> None:
     config = load_config()
     db = Database(args.db)
     engine = AudioEngine(demo=args.demo, config=config)
-    classifier = SoundClassifier(engine, MODEL_PATH, enabled=not args.no_classifier)
+    classifier = SoundClassifier(engine, MODELS_DIR, enabled=not args.no_classifier)
+    ml = MLManager(engine, classifier, db, config, CLIPS_DIR, lambda: recording)
     # Досегашният единичен офсет става офсетът на текущия източник
     config["calibration_offsets"].setdefault(source_key(), config["calibration_offset"])
     apply_source_calibration()

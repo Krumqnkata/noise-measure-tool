@@ -107,7 +107,7 @@
 
     <section>
       <h2 data-i18n>8. Събития над прага на алармата</h2>
-      <table class="grid"><thead><tr><th data-i18n>Начало</th><th data-i18n>Продължение</th><th>LAFmax</th><th>SEL</th></tr></thead><tbody id="r-events"></tbody></table>
+      <table class="grid"><thead><tr><th data-i18n>Начало</th><th data-i18n>Продължение</th><th data-i18n>Вид</th><th>LAFmax</th><th>SEL</th></tr></thead><tbody id="r-events"></tbody></table>
     </section>
 
     <section>
@@ -194,7 +194,7 @@
         $('r-sleep').textContent = t('Събития с LAFmax ≥ {thr} dB(A): {n} (препоръка на СЗО – до 10–15 на нощ в спалнята). LAeq за записа: {laeq} dB(A).',
           { thr: r.sleep.threshold, n, laeq: r.sleep.laeq.toFixed(1) });
         $('r-sleep-events').replaceChildren(...r.sleep.events.slice(0, 30).map((e) =>
-          row([fmtTime(e.at), e.source ? t(soundCategory(e.source).name) : '—', `${e.max.toFixed(1)} dB`])));
+          row([fmtTime(e.at), e.source ? soundName(e.source) : '—', `${e.max.toFixed(1)} dB`])));
       }
 
       const lex = r.workplace.lex;
@@ -205,13 +205,14 @@
       });
 
       if (r.sources.length) {
-        $('r-sources').replaceChildren(...r.sources.map((s) => row([t(soundCategory(s.category).name), `${Math.round(s.share * 100)}%`, fmtDuration(s.seconds)])));
+        $('r-sources').replaceChildren(...r.sources.map((s) => row([soundName(s.category), `${Math.round(s.share * 100)}%`, fmtDuration(s.seconds)])));
       } else {
         $('r-sources-section').hidden = true;
       }
       $('r-events').replaceChildren(...(r.events.length ? [...r.events].reverse().map((e) => row([
         fmtDateTime(e.started_at),
         e.ended_at ? fmtDuration(e.ended_at - e.started_at) : t('продължава'),
+        e.kind === 'alarm' || !e.kind ? `${t('Аларма')} > ${e.threshold} dB` : eventLabel(e),
         `${fmtDb(e.max_level)} dB`,
         e.sel === null || e.sel === undefined ? '--' : `${fmtDb(e.sel)} dB`,
       ])) : [row([t('Няма събития в този запис.')])]));
