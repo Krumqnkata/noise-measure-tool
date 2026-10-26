@@ -85,6 +85,7 @@ async function loadList() {
 // ---------- отчет ----------
 
 async function openSession(id) {
+  if (id !== currentSession) intervalSec = null;   // нов запис – нов подходящ интервал
   currentSession = id;
   if (!id) {
     report = null;
@@ -164,17 +165,26 @@ function renderReport() {
       tile('LAeq', summary.laeq, 'Средно A-претеглено ниво за целия запис'),
       tile('LAFmax', summary.lafmax),
       tile('LAFmin', summary.lafmin),
+      tile('LAImax', summary.laimax, 'Максимум с времево претегляне Impulse'),
       tile('LCeq', summary.lceq),
+      tile('LCpeak', summary.lcpeak, 'Най-високият пик с C-претегляне – за работното място'),
+      tile('LZeq', summary.lzeq),
       tile('LZpeak', summary.lzpeak, 'Най-високият моментен пик, без претегляне'),
       tile('L10', summary.l10, 'Надвишено 10% от времето – шумните моменти'),
       tile('L50', summary.l50, 'Медиана'),
       tile('L90', summary.l90, 'Надвишено 90% от времето – фонът'),
-      tile('LZeq', summary.lzeq),
+      tile('SEL', summary.lae, 'Звукова експозиция: цялата енергия на записа, сведена до 1 s (LAE)'),
     );
-    // Десетата плочка пази решетката пълна на широк екран
-    const filler = document.createElement('div');
-    filler.className = 'hidden bg-panel md:block';
-    f('tiles').appendChild(filler);
+    for (const [p, v] of Object.entries(summary.ln)) {
+      const d = document.createElement('div');
+      d.innerHTML = '<dt class="inline text-ink3"></dt> <dd class="inline font-semibold tabular-nums"></dd>';
+      d.children[0].textContent = `L${p}`;
+      d.children[1].textContent = fmtDb(v);
+      f('ln').appendChild(d);
+    }
+
+    renderWorkplaceReport(f, summary);
+    renderEnvironmentReport(f);
 
     const diff = summary.lceq - summary.laeq;
     f('lowfreq').textContent = `LCeq − LAeq = ${diff.toFixed(1)} dB. ` + (diff > 15
@@ -233,14 +243,15 @@ function renderReport() {
   const tbody = f('events');
   if (!report.events.length) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="4" class="py-2 text-ink3"></td>';
+    tr.innerHTML = '<td colspan="5" class="py-2 text-ink3"></td>';
     tr.firstElementChild.textContent = t('Няма събития в този запис.');
     tbody.appendChild(tr);
   }
   for (const e of [...report.events].reverse()) {
     const tr = document.createElement('tr');
     const dur = e.ended_at ? fmtDuration(e.ended_at - e.started_at) : t('продължава');
-    for (const text of [fmtDateTime(e.started_at), dur, `${e.threshold} dB`, `${fmtDb(e.max_level)} dB`]) {
+    const sel = e.sel === null || e.sel === undefined ? '--' : `${fmtDb(e.sel)} dB`;
+    for (const text of [fmtDateTime(e.started_at), dur, `${e.threshold} dB`, `${fmtDb(e.max_level)} dB`, sel]) {
       const td = document.createElement('td');
       td.className = 'py-2 pr-4';
       td.textContent = text;
@@ -251,22 +262,142 @@ function renderReport() {
 
   $('report').replaceChildren(root);
 
+  reportCharts = null;   // старите графики (от предишния отчет) вече не са на страницата
   if (summary) {
-    const draw = () => { if (reportCharts) { drawTimeline(); drawHistogram(); } };
+    const q = (name) => $('report').querySelector(`[data-f="${name}"]`);
     reportCharts = {
-      timeline: setupCanvas($('report').querySelector('[data-f="timeline"]'), draw),
-      histogram: setupCanvas($('report').querySelector('[data-f="histogram"]'), draw),
+      timeline: setupCanvas(q('timeline'), redrawReport),
+      histogram: setupCanvas(q('histogram'), redrawReport),
+      intervals: setupCanvas(q('intervals'), redrawReport),
     };
-    attachTooltip(reportCharts.timeline, pickTimeline, draw);
-    attachTooltip(reportCharts.histogram, pickHistogram, draw);
-    draw();
+    attachTooltip(reportCharts.timeline, pickTimeline, redrawReport);
+    attachTooltip(reportCharts.histogram, pickHistogram, redrawReport);
+    attachTooltip(reportCharts.intervals, pickInterval, redrawReport);
+    setupIntervalSeg(q('interval-seg'));
+    redrawReport();
   } else {
     reportCharts = null;
   }
 }
 
 function redrawReport() {
-  if (reportCharts) { drawTimeline(); drawHistogram(); }
+  if (reportCharts) { drawTimeline(); drawHistogram(); drawIntervals(); }
+}
+
+// ---------- работно място и околна среда в отчета ----------
+
+function renderWorkplaceReport(f, summary) {
+  const hoursInput = f('wp-hours');
+  const update = () => {
+    const hours = parseFloat(hoursInput.value);
+    const seconds = Number.isFinite(hours) && hours > 0 ? hours * 3600 : summary.seconds;
+    const lex = lex8h(summary.laeq, seconds);
+    const reached = workplaceReached(lex, summary.lcpeak ?? -Infinity);
+    f('wp-lex').textContent = fmtDb(lex);
+    f('wp-peak').textContent = fmtDb(summary.lcpeak);
+    const status = f('wp-status');
+    if (reached) {
+      status.textContent = `${t(WORKPLACE_INFO[reached].label)} – ${t('достигнати')}. ${t(WORKPLACE_INFO[reached].action)}`;
+      status.className = 'mt-4 text-sm text-warn-ink';
+    } else {
+      status.textContent = t('Под долните стойности за действие (80 dB(A) и 135 dB(C)).');
+      status.className = 'mt-4 text-sm text-ink2';
+    }
+  };
+  // По подразбиране – колкото е продължил записът
+  hoursInput.value = (summary.seconds / 3600).toFixed(2);
+  hoursInput.addEventListener('input', update);
+  update();
+}
+
+function renderEnvironmentReport(f) {
+  const select = f('env-zone');
+  fillEnvSelect(select);
+  select.addEventListener('change', (e) => setEnvSelection(e.target.value));
+  const env = report.environment;
+  const limits = envLimitsFor();
+  const tbody = f('env');
+  for (const period of ['day', 'evening', 'night']) {
+    const row = env[period];
+    const tr = document.createElement('tr');
+    const over = row.laeq !== null && limits && row.laeq > limits[period];
+    const cells = [
+      `${t(ENV_PERIOD_NAMES[period])} (${t(ENV_PERIOD_HOURS[period])})`,
+      row.laeq === null ? '—' : `${row.laeq.toFixed(1)} dB`,
+      limits ? `${limits[period]} dB` : '--',
+      `${Math.round(row.coverage * 100)}%`,
+    ];
+    cells.forEach((text, i) => {
+      const td = document.createElement('td');
+      td.className = 'py-1.5 pr-3' + (i === 1 && over ? ' font-semibold text-crit-ink' : '');
+      td.textContent = text;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  }
+  f('lden').textContent = env.lden === null
+    ? t('Lden изисква данни и за трите периода – направи запис за цяло денонощие.')
+    : `Lden = ${env.lden.toFixed(1)} dB`;
+}
+
+// ---------- LAeq по интервали ----------
+
+let intervalSec = null;
+
+function setupIntervalSeg(root) {
+  const duration = report.summary.seconds;
+  // Подходящ интервал според дължината на записа
+  if (!intervalSec) intervalSec = duration < 2 * 3600 ? 60 : duration < 12 * 3600 ? 900 : 3600;
+  const render = () => root.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', Number(b.dataset.value) === intervalSec));
+  root.addEventListener('click', (e) => {
+    const v = Number(e.target.closest('button')?.dataset.value);
+    if (v) { intervalSec = v; render(); redrawReport(); }
+  });
+  render();
+}
+
+function pickInterval(x) {
+  const cv = reportCharts.intervals;
+  const rows = report.intervals[String(intervalSec)];
+  const slot = cv.box.pw / rows.length;
+  const i = Math.floor((x - cv.box.L) / slot);
+  if (i < 0 || i >= rows.length) return null;
+  return {
+    x: cv.box.L + slot * (i + 0.5),
+    title: fmtTime(rows[i].t),
+    rows: [{ value: `${rows[i].laeq.toFixed(1)} dB`, label: 'LAeq' }],
+    index: i,
+  };
+}
+
+function drawIntervals() {
+  const cv = reportCharts.intervals;
+  const { ctx, w, h } = cv;
+  ctx.clearRect(0, 0, w, h);
+  if (!w) return;
+  const rows = report.intervals[String(intervalSec)];
+  const box = { L: 36, T: 8, pw: w - 44, ph: h - 28 };
+  cv.box = box;
+  const { lo, hi } = levelRange(rows.map((r) => r.laeq));
+  const y = drawLevelGrid(ctx, box, lo, hi);
+  cv.tip.refresh();
+  const slot = box.pw / rows.length;
+  const barW = Math.max(1, Math.min(24, slot - 2));
+  const labelEvery = Math.ceil(rows.length / 6);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  rows.forEach((r, i) => {
+    const top = y(r.laeq), hgt = box.T + box.ph - top;
+    if (hgt >= 1) {
+      ctx.fillStyle = cv.hover?.index === i ? COLORS.accentHover : COLORS.accent;
+      ctx.beginPath();
+      ctx.roundRect(box.L + slot * i + (slot - barW) / 2, top, barW, hgt, [Math.min(4, hgt, barW / 2), Math.min(4, hgt, barW / 2), 0, 0]);
+      ctx.fill();
+    }
+    if (i % labelEvery === 0) {
+      ctx.fillStyle = COLORS.axis;
+      ctx.fillText(new Date(r.t * 1000).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' }), box.L + slot * (i + 0.5), h - 14);
+    }
+  });
 }
 
 function pickTimeline(x) {

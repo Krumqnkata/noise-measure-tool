@@ -93,12 +93,75 @@ const SOUND_CATEGORIES = {
 };
 const soundCategory = (id) => SOUND_CATEGORIES[id] || SOUND_CATEGORIES.unknown;
 
+// Наредба № 6/2006, Приложение 2 – имената на териториите (табл. 2) и помещенията (табл. 1).
+// Числата идват от сървъра (/api/norms), за да има един източник.
+const ENV_ZONE_NAMES = {
+  residential: 'Жилищни зони и територии',
+  central: 'Смесени централни градски части',
+  road: 'Територии с интензивен автомобилен трафик',
+  rail: 'Територии с релсов железопътен и трамваен транспорт',
+  aviation: 'Територии с авиационен шум',
+  industrial: 'Производствено-складови територии и зони',
+  recreation: 'Зони за обществен и индивидуален отдих',
+  medical: 'Зони за лечебни заведения',
+  education: 'Зони за научноизследователска и учебна дейност',
+  quiet: 'Тихи зони извън урбанизираните територии',
+};
+const INDOOR_ROOM_NAMES = {
+  hospital: 'Стаи и операционни зали в лечебни заведения',
+  living: 'Жилищни стаи, спални, хотелски стаи',
+  doctor: 'Лекарски кабинети, конферентни и зрителни зали',
+  classroom: 'Класни стаи, аудитории, читални',
+  office: 'Работни помещения в административни сгради',
+  catering: 'Заведения за хранене, фоайета, салони',
+  shop: 'Търговски зали, зали за пътници в гари',
+};
+const ENV_PERIOD_NAMES = { day: 'Ден', evening: 'Вечер', night: 'Нощ' };
+const ENV_PERIOD_HOURS = { day: '7–19 ч', evening: '19–23 ч', night: '23–7 ч' };
+const envPeriodOf = (hour) => (hour >= 7 && hour < 19 ? 'day' : hour >= 19 && hour < 23 ? 'evening' : 'night');
+
+// Директива 2003/10/ЕО / Наредба № 6 от 2005 г. – праговете и какво изискват
+const WORKPLACE_INFO = {
+  lower: { label: 'Долни стойности за действие', action: 'Работодателят осигурява антифони, информация и обучение; аудиометрия при поискване.' },
+  upper: { label: 'Горни стойности за действие', action: 'Антифоните са задължителни; програма от мерки срещу шума; зоната се обозначава.' },
+  limit: { label: 'Гранични стойности', action: 'Не бива да се превишават дори с антифоните – нужни са незабавни мерки.' },
+};
+
+let NORMS = null;
+async function loadNorms() {
+  if (!NORMS) NORMS = await api('/api/norms');
+  return NORMS;
+}
+
+// Избраната зона/помещение за сравнение с Наредба № 6/2006 – обща за „Норми“ и отчетите
+let envSelection = store.get('envZone', { kind: 'zone', id: 'residential', tonal: false });
+function envLimitsFor(sel = envSelection) {
+  if (!NORMS) return null;
+  const values = sel.kind === 'zone' ? NORMS.env_zones[sel.id] : NORMS.indoor_rooms[sel.id];
+  const penalty = sel.kind === 'room' && sel.tonal && NORMS.indoor_tonal_penalty_rooms.includes(sel.id) ? 5 : 0;
+  return { day: values[0] - penalty, evening: values[1] - penalty, night: values[2] - penalty };
+}
+const envSelectionName = (sel = envSelection) => t((sel.kind === 'zone' ? ENV_ZONE_NAMES : INDOOR_ROOM_NAMES)[sel.id]);
+
+// Попълва <select> със зоните и помещенията (групирани)
+function fillEnvSelect(select) {
+  select.replaceChildren();
+  for (const [kind, label, names] of [['zone', 'Територии', ENV_ZONE_NAMES], ['room', 'Помещения (проникващ шум)', INDOOR_ROOM_NAMES]]) {
+    const group = document.createElement('optgroup');
+    group.label = t(label);
+    for (const [id, name] of Object.entries(names)) group.appendChild(new Option(t(name), `${kind}:${id}`));
+    select.appendChild(group);
+  }
+  select.value = `${envSelection.kind}:${envSelection.id}`;
+}
+
 // Шумова доза: при ниво L допустимото време е 8 ч / 2^((L − критерий) / обменен коеф.)
 const DOSE_STANDARDS = {
   niosh: { label: 'NIOSH', criterion: 85, exchange: 3, threshold: 80 },
   osha: { label: 'OSHA', criterion: 90, exchange: 5, threshold: 80 },
 };
 const WORK_DAY = 8 * 3600;
+const lex8h = (laeq, seconds) => laeq + 10 * Math.log10(seconds / WORK_DAY);
 const allowedSeconds = (L, std) => WORK_DAY / 2 ** ((L - std.criterion) / std.exchange);
 const twaFromDose = (dose, std) => (dose > 0 ? std.criterion + (std.exchange / Math.log10(2)) * Math.log10(dose / 100) : NaN);
 const doseColor = (d) => (d < 50 ? LEVELS[0].color : d < 100 ? LEVELS[2].color : LEVELS[3].color);
@@ -132,6 +195,9 @@ function errorText(detail) {
     not_found: 'Няма такъв запис.',
     name_empty: 'Името не може да е празно.',
     stop_first: 'Първо спри записа.',
+    not_running: 'Първо пусни измерването (бутона Старт).',
+    busy: 'Вече тече измерване – изчакай го.',
+    no_impulse: 'Не долових плясък. Пляскай по-силно и по-близо до микрофона.',
   };
   return t(messages[detail.code] || detail.code, detail);
 }

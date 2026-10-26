@@ -7,6 +7,9 @@ import time
 import numpy as np
 from scipy import signal
 
+from norms import nc_rating, nr_rating, thirds_to_octaves
+from room import synthetic_clap
+
 try:
     import sounddevice as sd
 except OSError:  # липсва PortAudio – остава само demo режимът
@@ -27,6 +30,9 @@ DB_FLOOR = -120.0
 
 WEIGHTINGS = ("A", "C", "Z")
 TIME_CONSTANTS = {"F": 0.125, "S": 1.0}   # Fast и Slow по IEC 61672
+IMPULSE_RISE = 0.035                       # Impulse: изкачване 35 ms …
+IMPULSE_DECAY = 1.5                        # … и пиков детектор със спадане 1.5 s (≈2.9 dB/s)
+OCTAVE_AVERAGING = 3.0                     # s – осредняване на октавите за NR/NC
 
 # Номинални средни честоти на третинооктавните ленти (IEC 61260)
 THIRD_OCTAVE_NOMINAL = [
@@ -104,7 +110,9 @@ class _SecondAccumulator:
         self.sumsq = {w: 0.0 for w in WEIGHTINGS}
         self.laf_max = 0.0
         self.laf_min = math.inf
+        self.lai_max = 0.0
         self.z_peak = 0.0
+        self.c_peak = 0.0
 
 
 class AudioEngine:
@@ -120,9 +128,13 @@ class AudioEngine:
         self._sos = {"A": weighting_sos("A", SAMPLE_RATE), "C": weighting_sos("C", SAMPLE_RATE)}
         # Експоненциално усредняване на квадрата: y[n] = α·x²[n] + (1−α)·y[n−1]
         self._alpha = {t: 1 - math.exp(-1 / (tau * SAMPLE_RATE)) for t, tau in TIME_CONSTANTS.items()}
+        self._impulse_alpha = 1 - math.exp(-1 / (IMPULSE_RISE * SAMPLE_RATE))
+        self._impulse_decay = math.exp(-1 / (IMPULSE_DECAY * SAMPLE_RATE))
         self._stream = None
         self._demo_thread: threading.Thread | None = None
         self._demo_stop = threading.Event()
+        self._demo_clap: np.ndarray | None = None   # плясък в демо режим (за RT60)
+        self._demo_clap_pos = 0
         self._reset_state()
 
         # FFT за спектъра (128 логаритмични ленти)
@@ -157,6 +169,10 @@ class AudioEngine:
             self._history = RingBuffer(HISTORY_SECONDS * SAMPLE_RATE)
             self._zi = {w: np.zeros((sos.shape[0], 2)) for w, sos in self._sos.items()}
             self._ms = None          # текущ среден квадрат за всяка комбинация претегляне/време
+            self._impulse_rise = {w: 0.0 for w in WEIGHTINGS}   # 35 ms част на Impulse
+            self._c_peak_recent = 0.0                           # C-пик от последния кадър насам
+            self._oct_avg = None                                # осреднени третинооктави (мощност)
+            self._oct_time = None
             self._acc = _SecondAccumulator()
             self._seconds: list[dict] = []
 
@@ -167,8 +183,11 @@ class AudioEngine:
 
         acc = self._acc
         if self._ms is None:  # първи блок – стартираме от средното му, а не от нула
-            self._ms = {w: {t: float(np.mean(x * x)) for t in TIME_CONSTANTS} for w, x in channels.items()}
+            self._ms = {w: {t: float(np.mean(x * x)) for t in (*TIME_CONSTANTS, "I")} for w, x in channels.items()}
+            self._impulse_rise = {w: self._ms[w]["I"] for w in WEIGHTINGS}
         ms = {w: dict(v) for w, v in self._ms.items()}
+        # d^k за пиковия детектор на Impulse
+        decay = self._impulse_decay ** np.arange(len(block))
         for w, x in channels.items():
             sq = x * x
             acc.sumsq[w] += float(sq.sum())
@@ -178,13 +197,28 @@ class AudioEngine:
                 if w == "A" and t == "F":
                     acc.laf_max = max(acc.laf_max, float(y.max()))
                     acc.laf_min = min(acc.laf_min, float(y.min()))
+
+            # Impulse: изкачване с τ = 35 ms, после пиков детектор y[n] = max(r[n], y[n−1]·d).
+            # Векторно: z[k] = y[k]·d^(−k) е натрупан максимум на r[k]·d^(−k).
+            ai = self._impulse_alpha
+            rise, _ = signal.lfilter([ai], [1.0, ai - 1.0], sq, zi=[(1.0 - ai) * self._impulse_rise[w]])
+            self._impulse_rise[w] = float(rise[-1])
+            scaled = rise / decay
+            scaled[0] = max(scaled[0], ms[w]["I"] * self._impulse_decay)
+            impulse = np.maximum.accumulate(scaled) * decay
+            ms[w]["I"] = float(impulse[-1])
+            if w == "A":
+                acc.lai_max = max(acc.lai_max, float(impulse.max()))
         acc.z_peak = max(acc.z_peak, float(np.max(np.abs(block))))
+        c_peak = float(np.max(np.abs(channels["C"])))
+        acc.c_peak = max(acc.c_peak, c_peak)
         acc.n += len(block)
 
         with self._lock:
             self._raw = np.concatenate((self._raw[len(block):], block))
             self._history.write(block)
             self._ms = ms
+            self._c_peak_recent = max(self._c_peak_recent, c_peak)
             if acc.n >= SAMPLE_RATE:
                 self._seconds.append(self._finish_second(acc))
                 self._acc = _SecondAccumulator()
@@ -199,6 +233,8 @@ class AudioEngine:
             "lceq": power_db(acc.sumsq["C"] / acc.n) + off,
             "lzeq": power_db(acc.sumsq["Z"] / acc.n) + off,
             "lzpeak": power_db(acc.z_peak ** 2) + off,
+            "laimax": power_db(acc.lai_max) + off,
+            "lcpeak": power_db(acc.c_peak ** 2) + off,
         }
 
     def _callback(self, indata, frames, time_info, status) -> None:
@@ -269,6 +305,26 @@ class AudioEngine:
 
     # --- симулиран сигнал ---------------------------------------------------
 
+    def demo_clap(self, t60: float, delay: float = 1.0) -> None:
+        """В демо режим „пляска“ след delay секунди – звук, затихващ за t60 s (за RT60)."""
+        self._demo_clap = synthetic_clap(t60, SAMPLE_RATE)
+        self._demo_clap_pos = -int(delay * SAMPLE_RATE)
+
+    def _add_demo_clap(self, block: np.ndarray) -> np.ndarray:
+        clap = self._demo_clap
+        if clap is None:
+            return block
+        start, end = self._demo_clap_pos, self._demo_clap_pos + len(block)
+        self._demo_clap_pos = end
+        if end > 0:
+            seg = clap[max(start, 0):min(end, len(clap))]
+            offset = max(0, -start)
+            block = block.copy()
+            block[offset:offset + len(seg)] += seg
+        if end >= len(clap):
+            self._demo_clap = None
+        return block
+
     def _demo_loop(self) -> None:
         rng = np.random.default_rng()
         n = np.arange(1, BLOCK_SIZE + 1)
@@ -298,14 +354,15 @@ class AudioEngine:
             # Общото ниво бавно се мени между ≈ −80 и −40 dBFS (≈ 40–80 dB при
             # офсет 120), а редките „удари“ го вдигат с още ~22 dB.
             level_db = -60 + 15 * math.sin(2 * math.pi * sec / 40)
-            if burst_left == 0 and rng.random() < 0.004:
+            # Докато чакаме плясък за RT60, без случайни удари (иначе ще бъдат взети за плясъка)
+            if burst_left == 0 and self._demo_clap is None and rng.random() < 0.004:
                 burst_left = int(rng.integers(5, 20))
             if burst_left:
                 level_db += 22
                 burst_left -= 1
             gain = 10 ** (level_db / 20)
 
-            self._push(np.clip(gain * (tone + hum + whistle + noise), -1.0, 1.0))
+            self._push(np.clip(self._add_demo_clap(gain * (tone + hum + whistle + noise)), -1.0, 1.0))
             pos += BLOCK_SIZE
 
             # Темпо като на истинска звукова карта
@@ -322,10 +379,12 @@ class AudioEngine:
         with self._lock:
             raw = self._raw.copy()
             ms = self._ms
+            c_peak = self._c_peak_recent
+            self._c_peak_recent = 0.0
         off = self.config["calibration_offset"]
 
         if ms is None:
-            levels = {w: {t: DB_FLOOR + off for t in TIME_CONSTANTS} for w in WEIGHTINGS}
+            levels = {w: {t: DB_FLOOR + off for t in (*TIME_CONSTANTS, "I")} for w in WEIGHTINGS}
         else:
             levels = {w: {t: round(power_db(v) + off, 1) for t, v in ms[w].items()} for w in WEIGHTINGS}
         recent = raw[-int(TIME_CONSTANTS["F"] * SAMPLE_RATE):]
@@ -362,6 +421,17 @@ class AudioEngine:
         octaves = 10 * np.log10(np.maximum(band_power, 1e-24))
         octaves = np.maximum(octaves, DB_FLOOR) + off
 
+        # NR и NC от октавите, осреднени експоненциално за ~3 s (иначе прескачат всеки кадър)
+        now = time.monotonic()
+        if self._oct_avg is None:
+            self._oct_avg = band_power
+        else:
+            k = 1 - math.exp(-(now - self._oct_time) / OCTAVE_AVERAGING)
+            self._oct_avg = self._oct_avg + (band_power - self._oct_avg) * k
+        self._oct_time = now
+        avg_thirds = 10 * np.log10(np.maximum(self._oct_avg, 1e-24)) + off
+        octave_bands = thirds_to_octaves(avg_thirds)
+
         step = WAVEFORM_SAMPLES // WAVEFORM_POINTS
         waveform = raw[-WAVEFORM_SAMPLES:][::step]
 
@@ -372,7 +442,11 @@ class AudioEngine:
             "dbc": levels["C"]["F"],
             "levels": levels,
             "peak_db": round(peak_db, 1),
+            "c_peak": round(power_db(c_peak ** 2) + off, 1),
             "peak_freq": round(peak_freq, 1),
+            "octave_bands": [round(v, 1) for v in octave_bands],
+            "nr": nr_rating(octave_bands),
+            "nc": nc_rating(octave_bands[1:]),
             "waveform": np.round(waveform, 4).tolist(),
             "spectrum": np.round(bands, 1).tolist(),
             "octaves": np.round(octaves, 1).tolist(),

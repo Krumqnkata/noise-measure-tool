@@ -246,6 +246,72 @@ function drawOctaves() {
   });
 }
 
+// ---------- NR / NC ----------
+// Кривите NR 10…80 като тънки линии, измерените октави отгоре. Числата идват от /api/norms.
+
+const nrCv = setupCanvas($('nr-chart'), markDirty);
+const NR_SHOWN = [10, 20, 30, 40, 50, 60, 70, 80];
+
+attachTooltip(nrCv, (x) => {
+  const levels = latest?.octave_bands;
+  const bands = NORMS?.nr_bands;
+  if (!levels || !bands || !nrCv.box) return null;
+  const { L, pw } = nrCv.box;
+  const i = Math.floor(((x - L) / pw) * bands.length);
+  if (i < 0 || i >= bands.length) return null;
+  return {
+    x: nrCv.x(i),
+    title: `${fmtHz(bands[i])} Hz`,
+    rows: [{ value: `${levels[i].toFixed(1)} dB`, label: t('октава'), color: COLORS.accent }],
+    points: [{ y: nrCv.y(levels[i]), color: COLORS.accent }],
+  };
+}, markDirty);
+
+function drawNr() {
+  const cv = nrCv;
+  const { ctx, w, h } = cv;
+  ctx.clearRect(0, 0, w, h);
+  const bands = NORMS?.nr_bands;
+  if (!w || !bands) return;
+  const levels = latest?.octave_bands;
+  const box = { L: 36, T: 8, pw: w - 36 - 52, ph: h - 30 };
+  const hi = Math.max(100, Math.ceil(((levels ? Math.max(...levels) : 0) + 10) / 20) * 20);
+  const y = (v) => box.T + box.ph * (1 - Math.min(Math.max(v, 0), hi) / hi);
+  const x = (i) => box.L + box.pw * ((i + 0.5) / bands.length);
+  Object.assign(cv, { box, x, y });
+
+  ctx.font = FONT; ctx.lineWidth = 1;
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let v = 0; v <= hi; v += 20) {
+    const yy = Math.round(y(v)) + 0.5;
+    ctx.strokeStyle = COLORS.grid;
+    ctx.beginPath(); ctx.moveTo(box.L, yy); ctx.lineTo(box.L + box.pw, yy); ctx.stroke();
+    ctx.fillStyle = COLORS.axis; ctx.fillText(v, box.L - 8, yy);
+  }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  bands.forEach((f, i) => ctx.fillText(fmtHz(f), x(i), h - 16));
+
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  for (const nr of NR_SHOWN) {
+    const curve = NORMS.nr_curves[nr];
+    ctx.beginPath();
+    curve.forEach((v, i) => (i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v))));
+    ctx.strokeStyle = COLORS.tickMinor; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = COLORS.axis;
+    ctx.fillText(`NR ${nr}`, x(bands.length - 1) + 8, y(curve[curve.length - 1]));
+  }
+
+  cv.tip.refresh();
+  if (!levels) return;
+  drawSeries(ctx, levels.map((v, i) => [x(i), y(v)]), COLORS.accent);
+  levels.forEach((v, i) => {
+    ctx.beginPath(); ctx.arc(x(i), y(v), 4, 0, Math.PI * 2);
+    ctx.fillStyle = COLORS.accent; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = COLORS.surface; ctx.stroke();
+  });
+  drawCrosshair(cv);
+}
+
 // ---------- спектрограма ----------
 // Canvas с фиксирана резолюция: 1 колона на кадър, 1 ред на честотна лента.
 // При всеки кадър картината се измества с 1 px наляво и се дорисува нова колона.
@@ -301,6 +367,8 @@ function updateSpectrogramLegend() {
 // ---------- данни и рисуване ----------
 
 function analysisOnData(m) {
+  $('nr-value').textContent = m.nr;
+  $('nc-value').textContent = m.nc <= 15 ? '≤ 15' : m.nc;
   if ($('spec-hold').checked) {
     maxHold = maxHold ? maxHold.map((x, i) => Math.max(x, m.spectrum[i])) : [...m.spectrum];
   }
@@ -312,4 +380,5 @@ function analysisFrame(visible) {
   drawWaveform();
   drawSpectrum();
   drawOctaves();
+  drawNr();
 }

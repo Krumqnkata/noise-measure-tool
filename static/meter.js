@@ -317,6 +317,7 @@ function resetSession() {
   Object.assign(dose, { niosh: 0, osha: 0, elapsed: 0, lastT: null });
   history.length = 0;
   resetAnalysis();
+  resetWorkplace();
 }
 
 // ---------- цял екран ----------

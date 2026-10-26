@@ -158,7 +158,7 @@
                 <button data-value="A" data-i18n-attr="title" title="A – както чува човешкото ухо">A</button><button data-value="C" data-i18n-attr="title" title="C – включва и ниските честоти">C</button><button data-value="Z" data-i18n-attr="title" title="Z – без претегляне">Z</button>
               </div>
               <div id="seg-time" class="seg" role="group" data-i18n-attr="aria-label" aria-label="Времево претегляне">
-                <button data-value="F" data-i18n-attr="title" title="Бързо – 125 ms">Fast</button><button data-value="S" data-i18n-attr="title" title="Бавно – 1 s">Slow</button>
+                <button data-value="F" data-i18n-attr="title" title="Бързо – 125 ms">Fast</button><button data-value="S" data-i18n-attr="title" title="Бавно – 1 s">Slow</button><button data-value="I" data-i18n-attr="title" title="Импулс – 35 ms нагоре, 1.5 s надолу">Impulse</button>
               </div>
               <button id="snapshot" class="btn" data-i18n data-i18n-attr="title" title="Запази картинка (S)">Снимка</button>
               <button id="big-open" class="btn" data-i18n data-i18n-attr="title" title="Цял екран (F)">Цял екран</button>
@@ -305,6 +305,21 @@
             </div>
 
             <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
+              <div class="mb-3 flex flex-wrap items-start justify-between gap-4">
+                <div class="max-w-xl">
+                  <h2 class="font-medium" data-i18n>Фонов шум в помещение: NR и NC</h2>
+                  <p class="text-sm text-ink3" data-i18n>Оценка на постоянния шум (вентилация, климатици, хладилници) по октави, осреднено за ~3 s. По-ниското е по-тихо.</p>
+                </div>
+                <dl class="flex gap-8">
+                  <div><dt class="text-sm text-ink3">NR</dt><dd id="nr-value" class="text-3xl font-semibold">--</dd></div>
+                  <div><dt class="text-sm text-ink3">NC</dt><dd id="nc-value" class="text-3xl font-semibold">--</dd></div>
+                </dl>
+              </div>
+              <canvas id="nr-chart" class="h-64"></canvas>
+              <p class="mt-3 text-sm text-ink3" data-i18n>Ориентири: спалня NR 25–30, жилище NR 30–35, офис NR 35–40, ресторант NR 40–45, цех NR 50–60.</p>
+            </div>
+
+            <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
               <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h2 class="font-medium" data-i18n>Спектрограма</h2>
@@ -371,6 +386,33 @@
               </table>
             </div>
           </div>
+
+          <!-- Работно място -->
+          <div class="mt-12">
+            <h2 class="text-xl font-semibold" data-i18n>Шум на работното място</h2>
+            <p class="mb-4 mt-1 max-w-2xl text-sm text-ink3" data-i18n>Директива 2003/10/ЕО и Наредба № 6 от 2005 г. Дневната експозиция LEX,8h пренася средното ниво към 8-часов работен ден.</p>
+            <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+              <dl class="grid grid-cols-2 content-start gap-x-4 gap-y-5 rounded-2xl bg-panel p-5 ring-1 ring-line">
+                <div><dt class="text-sm text-ink3">LEX,8h</dt><dd id="wp-lex" class="text-4xl font-semibold">--</dd><div class="text-xs text-ink3" data-i18n>за измереното време</div></div>
+                <div><dt class="text-sm text-ink3">LCpeak</dt><dd id="wp-peak" class="text-4xl font-semibold">--</dd><div class="text-xs text-ink3" data-i18n>най-високият пик</div></div>
+                <div><dt class="text-sm text-ink3" data-i18n>LAeq на сесията</dt><dd id="wp-laeq" class="text-lg font-semibold">--</dd></div>
+                <div><dt class="text-sm text-ink3" data-i18n>Ако така е целият ден</dt><dd id="wp-full" class="text-lg font-semibold">--</dd></div>
+              </dl>
+              <ol id="wp-limits" class="space-y-3"></ol>
+            </div>
+          </div>
+
+          <!-- Околна среда -->
+          <div class="mt-12">
+            <h2 class="text-xl font-semibold" data-i18n>Шум в околната среда</h2>
+            <p class="mb-4 mt-1 max-w-2xl text-sm text-ink3" data-i18n>Наредба № 6 от 2006 г. Границата зависи от мястото и от частта на денонощието: ден 7–19 ч, вечер 19–23 ч, нощ 23–7 ч.</p>
+            <div class="mb-4 flex flex-wrap items-center gap-x-5 gap-y-3">
+              <select id="env-zone" class="field max-w-md" data-i18n-attr="aria-label" aria-label="Място"></select>
+              <label class="flex items-center gap-2 text-sm text-ink2"><input id="env-tonal" type="checkbox" class="h-4 w-4 accent-accent"> <span data-i18n>Тонален или импулсен шум (−5 dB в помещения)</span></label>
+            </div>
+            <div id="env-periods" class="grid gap-4 md:grid-cols-3"></div>
+            <p class="mt-3 text-sm text-ink3" data-i18n>Сравнението тук е със средното ниво на текущата сесия. За официална оценка запиши целия период – отчетът показва Lден, Lвечер, Lнощ и Lden.</p>
+          </div>
         </section>
 
         <!-- ============ ЗАПИСИ ============ -->
@@ -432,7 +474,11 @@
                   </div>
                 </div>
 
-                <dl data-f="tiles" class="grid grid-cols-2 gap-px overflow-hidden rounded-2xl bg-line ring-1 ring-line sm:grid-cols-3 md:grid-cols-5"></dl>
+                <dl data-f="tiles" class="grid grid-cols-2 gap-px overflow-hidden rounded-2xl bg-line ring-1 ring-line sm:grid-cols-3 md:grid-cols-6"></dl>
+                <div class="flex flex-wrap items-baseline gap-x-6 gap-y-2 text-sm">
+                  <span class="text-ink3" data-i18n>Статистически нива:</span>
+                  <dl data-f="ln" class="contents"></dl>
+                </div>
                 <p data-f="lowfreq" class="text-sm"></p>
 
                 <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
@@ -443,6 +489,40 @@
                     <span class="flex items-center gap-1.5"><span class="h-2 w-3 rounded-sm bg-crit/30"></span><span data-i18n>Аларма</span></span>
                   </p>
                   <canvas data-f="timeline" class="h-60"></canvas>
+                </div>
+
+                <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
+                  <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h3 class="font-medium" data-i18n>LAeq по интервали</h3>
+                    <div data-f="interval-seg" class="seg" role="group">
+                      <button data-value="60">1 min</button><button data-value="300">5 min</button><button data-value="900">15 min</button><button data-value="3600">1 h</button>
+                    </div>
+                  </div>
+                  <canvas data-f="intervals" class="h-48"></canvas>
+                </div>
+
+                <div class="grid gap-6 md:grid-cols-2">
+                  <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
+                    <h3 class="font-medium" data-i18n>Работно място</h3>
+                    <p class="mb-4 text-xs text-ink3" data-i18n>Директива 2003/10/ЕО; LEX,8h за времето на излагане.</p>
+                    <div class="flex flex-wrap items-end gap-x-6 gap-y-3">
+                      <div><div class="text-sm text-ink3">LEX,8h</div><div data-f="wp-lex" class="text-3xl font-semibold"></div></div>
+                      <div><div class="text-sm text-ink3">LCpeak</div><div data-f="wp-peak" class="text-3xl font-semibold"></div></div>
+                      <label class="text-sm text-ink3"><span data-i18n>Време на излагане, ч</span>
+                        <input data-f="wp-hours" type="number" min="0.1" max="24" step="0.25" class="field mt-1 w-24"></label>
+                    </div>
+                    <p data-f="wp-status" class="mt-4 text-sm"></p>
+                  </div>
+                  <div class="rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
+                    <h3 class="font-medium" data-i18n>Околна среда</h3>
+                    <p class="mb-3 text-xs text-ink3" data-i18n>Наредба № 6 от 2006 г. – сравнение с избраното място.</p>
+                    <select data-f="env-zone" class="field mb-3" data-i18n-attr="aria-label" aria-label="Място"></select>
+                    <table class="w-full text-left text-sm">
+                      <thead class="text-ink3"><tr><th class="py-1 pr-3 font-medium" data-i18n>Период</th><th class="py-1 pr-3 font-medium">LAeq</th><th class="py-1 pr-3 font-medium" data-i18n>Граница</th><th class="py-1 font-medium" data-i18n>Покритие</th></tr></thead>
+                      <tbody data-f="env" class="divide-y divide-line tabular-nums"></tbody>
+                    </table>
+                    <p data-f="lden" class="mt-3 text-sm text-ink2"></p>
+                  </div>
                 </div>
 
                 <div class="grid gap-6 md:grid-cols-2">
@@ -472,13 +552,60 @@
                 <h3 class="mb-3 font-medium" data-i18n>Събития от алармата</h3>
                 <div class="overflow-x-auto">
                   <table class="w-full text-left text-sm">
-                    <thead class="text-ink3"><tr><th class="py-1.5 pr-4 font-medium" data-i18n>Начало</th><th class="py-1.5 pr-4 font-medium" data-i18n>Продължение</th><th class="py-1.5 pr-4 font-medium" data-i18n>Праг</th><th class="py-1.5 font-medium" data-i18n>Макс.</th></tr></thead>
+                    <thead class="text-ink3"><tr><th class="py-1.5 pr-4 font-medium" data-i18n>Начало</th><th class="py-1.5 pr-4 font-medium" data-i18n>Продължение</th><th class="py-1.5 pr-4 font-medium" data-i18n>Праг</th><th class="py-1.5 pr-4 font-medium" data-i18n>Макс.</th><th class="py-1.5 font-medium" title="Sound exposure level">SEL</th></tr></thead>
                     <tbody data-f="events" class="divide-y divide-line tabular-nums"></tbody>
                   </table>
                 </div>
               </div>
             </div>
           </template>
+        </section>
+
+        <!-- ============ ПОМЕЩЕНИЕ ============ -->
+        <section data-section="room" hidden>
+          <div class="mb-8">
+            <h1 class="text-3xl font-semibold tracking-tight" data-i18n>Акустика на помещението</h1>
+            <p class="mt-1 max-w-2xl text-ink2" data-i18n>Време на реверберация RT60 – колко секунди трябват на звука да затихне с 60 dB. Мери се с плясък или спукан балон (ISO 3382-2).</p>
+          </div>
+
+          <div class="grid gap-6 lg:grid-cols-2">
+            <div class="space-y-4 rounded-2xl bg-panel p-5 ring-1 ring-line">
+              <h2 class="font-medium" data-i18n>Как се мери</h2>
+              <ol class="list-decimal space-y-1.5 pl-5 text-sm text-ink2">
+                <li data-i18n>Затвори вратите и прозорците и пази тишина.</li>
+                <li data-i18n>Застани в средата на стаята, далеч от стените.</li>
+                <li data-i18n>Натисни „Измери“ и до 15 секунди пляскай силно веднъж (или спукай балон).</li>
+                <li data-i18n>Не говори още 3 секунди, докато звукът затихне.</li>
+              </ol>
+              <div class="flex flex-wrap items-center gap-3">
+                <button id="rt-start" class="btn btn-primary" data-i18n>Измери</button>
+                <span id="rt-status" class="text-sm text-ink2"></span>
+              </div>
+            </div>
+            <div class="rounded-2xl bg-panel p-5 ring-1 ring-line">
+              <div class="text-sm text-ink3" data-i18n>Време на реверберация (500 Hz – 1 kHz)</div>
+              <div class="mt-1 flex items-baseline gap-2"><span id="rt-value" class="text-6xl font-semibold">--</span><span class="text-xl text-ink2">s</span></div>
+              <p id="rt-verdict" class="mt-3 text-sm text-ink2" data-i18n>Още няма измерване.</p>
+              <ul id="rt-targets" class="mt-4 space-y-1.5 text-sm"></ul>
+            </div>
+          </div>
+
+          <div id="rt-details" hidden class="mt-6 rounded-2xl bg-panel p-4 ring-1 ring-line sm:p-5">
+            <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 class="font-medium" data-i18n>Затихване по октави</h2>
+                <p class="text-sm text-ink3" data-i18n>Кривата на Шрьодер; T20 се смята между −5 и −25 dB, T30 – между −5 и −35 dB.</p>
+              </div>
+              <div id="seg-rt-band" class="seg" role="group"></div>
+            </div>
+            <canvas id="rt-chart" class="h-56"></canvas>
+            <div class="mt-4 overflow-x-auto">
+              <table class="w-full text-left text-sm">
+                <thead class="text-ink3"><tr class="border-b border-line"><th class="py-1.5 pr-4 font-medium" data-i18n>Октава</th><th class="py-1.5 pr-4 font-medium">T20</th><th class="py-1.5 pr-4 font-medium">T30</th><th class="py-1.5 font-medium" data-i18n>Обхват над шума</th></tr></thead>
+                <tbody id="rt-table" class="divide-y divide-line tabular-nums"></tbody>
+              </table>
+            </div>
+          </div>
         </section>
 
         <!-- ============ НАСТРОЙКИ ============ -->
@@ -629,8 +756,10 @@
   <script src="/static/i18n.js"></script>
   <script src="/static/state.js"></script>
   <script src="/static/meter.js"></script>
+  <script src="/static/norms.js"></script>
   <script src="/static/analysis.js"></script>
   <script src="/static/records.js"></script>
+  <script src="/static/room.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

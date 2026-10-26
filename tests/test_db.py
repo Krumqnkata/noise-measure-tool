@@ -1,9 +1,11 @@
+import math
 import sqlite3
+from datetime import datetime
 
 import numpy as np
 import pytest
 
-from db import DOSE_STANDARDS, Database, energy_mean, noise_dose
+from db import DOSE_STANDARDS, Database, energy_mean, noise_dose, sound_exposure
 
 
 def test_energy_mean_is_not_arithmetic():
@@ -23,10 +25,14 @@ def test_noise_dose_ignores_levels_below_threshold():
     assert noise_dose(np.full(3600, 79.0), **DOSE_STANDARDS["niosh"])["dose"] == 0
 
 
-def make_session(db: Database, levels: list[float]) -> int:
+START = datetime(2026, 10, 26, 12, 0, 0).timestamp()   # обед, местно време
+
+
+def make_session(db: Database, levels: list[float], start: float = START) -> int:
     sid = db.create_session("тест", 0.0, None)
     db.add_measurements(sid, [
-        {"t": 1000.0 + i, "laeq": v, "lafmax": v + 3, "lafmin": v - 3, "lceq": v + 1, "lzeq": v + 2, "lzpeak": v + 10}
+        {"t": start + i, "laeq": v, "lafmax": v + 3, "lafmin": v - 3, "lceq": v + 1, "lzeq": v + 2,
+         "lzpeak": v + 10, "laimax": v + 4, "lcpeak": v + 12}
         for i, v in enumerate(levels)
     ])
     db.end_session(sid)
@@ -44,6 +50,34 @@ def test_report_summary(tmp_path):
     assert s["l90"] == 50
     above_80 = next(a for a in report["above"] if a["threshold"] == 80)
     assert above_80["seconds"] == 10
+    assert s["laimax"] == 84 and s["lcpeak"] == 92
+    assert s["ln"]["95"] == 50 and s["ln"]["5"] == 80
+
+
+def test_sel_of_constant_level():
+    # 60 dB за 10 s: SEL = 60 + 10·lg(10) = 70 dB
+    assert sound_exposure(np.full(10, 60.0)) == pytest.approx(70.0)
+
+
+def test_report_workplace_and_intervals(tmp_path):
+    db = Database(tmp_path / "t.db")
+    sid = make_session(db, [85.0] * 3600)   # един час при 85 dB(A)
+    report = db.report(sid)
+    # LEX,8h за 1 час при 85 dB = 85 + 10·lg(1/8) = 75.97
+    assert report["workplace"]["lex"] == pytest.approx(85 + 10 * math.log10(1 / 8), abs=0.01)
+    assert report["workplace"]["level"] is None      # LEX ≈ 76 < 80 и пик 97 dB(C) < 135
+    minutes = report["intervals"]["60"]
+    assert len(minutes) == 60 and minutes[0]["laeq"] == 85.0
+
+
+def test_report_environment_periods(tmp_path):
+    db = Database(tmp_path / "t.db")
+    day = datetime(2026, 10, 26, 18, 59, 0).timestamp()      # 60 s ден + 60 s вечер
+    sid = make_session(db, [50.0] * 60 + [40.0] * 60, start=day)
+    env = db.report(sid)["environment"]
+    assert env["day"]["laeq"] == 50 and env["day"]["seconds"] == 60
+    assert env["evening"]["laeq"] == 40
+    assert env["night"]["laeq"] is None and env["lden"] is None
 
 
 def test_migrates_old_database(tmp_path):

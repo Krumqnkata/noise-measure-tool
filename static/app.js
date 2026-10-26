@@ -8,6 +8,7 @@ const SECTIONS = [
   { id: 'analysis', label: 'Анализ', primary: true, icon: ICON('<path d="M4 20V11M9 20V5M14 20v-8M19 20V8"/>') },
   { id: 'norms', label: 'Норми', primary: true, icon: ICON('<path d="M12 3 5 6v5c0 4.4 3 8.2 7 10 4-1.8 7-5.6 7-10V6l-7-3Z"/><path d="M12 8v4l2.5 1.5"/>') },
   { id: 'records', label: 'Записи', primary: true, icon: ICON('<circle cx="6.5" cy="7" r="2.5"/><path d="M12 7h8M4 13h16M4 18h16"/>') },
+  { id: 'room', label: 'Помещение', icon: ICON('<path d="M3 10.5 12 4l9 6.5V20H3v-9.5Z"/><path d="M8 20v-5h3M16 13c1.5 1 1.5 3 0 4M18.5 11.5c3 2 3 6 0 8"/>') },
   { id: 'settings', label: 'Настройки', icon: ICON('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>') },
 ];
 // Стари адреси и подраздели: адрес → [раздел, елемент, до който да се превърти]
@@ -154,6 +155,8 @@ function setLanguage(next) {
   route();
   renderRefScale();
   renderDoseTable();
+  renderNormsStatic();
+  if (rtResult) renderRt(); else renderRtTargets();
   renderLangSeg();
   onThemeChange();
   $('side-lang').textContent = lang === 'bg' ? 'English' : 'Български';
@@ -410,6 +413,7 @@ function connect() {
       latest = m;
       dirty = true;
       meterOnData(m);
+      normsOnData(m);
       analysisOnData(m);
     } else if (m.type === 'status') onStatus(m);
     else if (m.type === 'alarm') onAlarm(m);

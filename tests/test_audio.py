@@ -55,6 +55,45 @@ def test_second_records_use_calibration_offset():
     assert rows[-1]["lzpeak"] == pytest.approx(94.0, abs=0.1)
 
 
+def burst_max(engine_factory, burst_seconds: float, field: str) -> float:
+    """Максимумът на тонален импулс от 4 kHz спрямо постоянния тон (IEC 61672-1, т. 5.9)."""
+    from audio import AudioEngine
+    steady = AudioEngine(demo=False, config={"calibration_offset": 0.0, "device": None})
+    feed(steady, sine(4000, 3))
+    steady_level = steady.pop_seconds()[-1]["laeq"]
+
+    eng = AudioEngine(demo=False, config={"calibration_offset": 0.0, "device": None})
+    silence = np.zeros(int(0.5 * SAMPLE_RATE))
+    feed(eng, np.concatenate((silence, sine(4000, burst_seconds), np.zeros(2 * SAMPLE_RATE))))
+    return max(row[field] for row in eng.pop_seconds()) - steady_level
+
+
+# Очакваният отговор е 10·lg(1 − e^(−Tb/τ)) – стойностите от таблицата в IEC 61672-1
+@pytest.mark.parametrize("field, burst, expected", [
+    ("lafmax", 0.2, -1.0), ("lafmax", 0.01, -11.1), ("lafmax", 0.002, -18.0),
+    ("laimax", 0.02, -3.6), ("laimax", 0.005, -8.8), ("laimax", 0.002, -12.6),
+])
+def test_tone_burst_response(field, burst, expected):
+    assert burst_max(None, burst, field) == pytest.approx(expected, abs=0.5)
+
+
+def test_impulse_decays_at_about_2_9_db_per_second(engine):
+    feed(engine, sine(1000, 1))
+    feed(engine, np.zeros(SAMPLE_RATE))       # 1 s тишина след тона
+    level = engine.compute_frame()["levels"]["Z"]["I"]
+    assert level == pytest.approx(-9.0 - 2.9, abs=0.3)
+
+
+def test_c_peak_and_nr_in_frame(engine):
+    # Рязкото включване на тона дава кратко надвишаване на филтъра – мерим след него
+    feed(engine, sine(1000, 1))
+    engine.compute_frame()
+    feed(engine, sine(1000, 1))
+    frame = engine.compute_frame()
+    assert frame["c_peak"] == pytest.approx(-6.0, abs=0.1)     # амплитуда 0.5 → −6 dB
+    assert len(frame["octave_bands"]) == 9 and isinstance(frame["nr"], int)
+
+
 def test_ring_buffer_keeps_last_samples_in_order():
     rb = RingBuffer(10)
     rb.write(np.arange(7, dtype=np.float32))

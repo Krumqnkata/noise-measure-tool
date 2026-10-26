@@ -23,9 +23,13 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from audio import AudioEngine, sd
+import numpy as np
+
+from audio import SAMPLE_RATE, AudioEngine, sd
 from classifier import SoundClassifier
 from db import Database
+from norms import all_norms
+from room import DECAY_SECONDS, measure_rt60
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT / "static"
@@ -305,6 +309,50 @@ async def sessions_page():
 @app.get("/api/status")
 async def get_status():
     return status_message()
+
+
+@app.get("/api/norms")
+async def get_norms():
+    return all_norms()
+
+
+RT60_WAIT = 15.0         # s – колко чакаме плясъка
+RT60_JUMP = 15.0         # dB над фона, за да броим нещо за импулс
+rt60_busy = False
+
+
+@app.post("/api/room/rt60")
+async def room_rt60():
+    """Чака плясък до RT60_WAIT секунди, после пресмята RT60 от записаното затихване."""
+    global rt60_busy
+    if not engine.running:
+        raise api_error(400, "not_running")
+    if rt60_busy:
+        raise api_error(409, "busy")
+    rt60_busy = True
+    try:
+        if engine.demo:
+            engine.demo_clap(t60=float(np.random.uniform(0.35, 1.1)))
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + RT60_WAIT
+        background = engine.level("Z", "F")
+        while True:
+            await asyncio.sleep(0.02)
+            level = engine.level("Z", "F")
+            if level - background > RT60_JUMP:
+                break
+            # Фонът следва бавно нивото, за да не реагираме на постепенни промени
+            background = 0.95 * background + 0.05 * level
+            if loop.time() > deadline:
+                raise api_error(408, "no_impulse")
+        await asyncio.sleep(DECAY_SECONDS + 0.3)
+        audio = engine.recent_audio(DECAY_SECONDS + 1.8)
+        result = await asyncio.to_thread(measure_rt60, audio.astype(np.float64), SAMPLE_RATE)
+        if result is None:
+            raise api_error(422, "no_impulse")
+        return result
+    finally:
+        rt60_busy = False
 
 
 @app.get("/api/devices")

@@ -4,8 +4,11 @@ import math
 import sqlite3
 import threading
 import time
+from datetime import datetime
 
 import numpy as np
+
+from norms import ENV_HOURS, env_period, lden, lex_8h, workplace_level
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -26,7 +29,9 @@ CREATE TABLE IF NOT EXISTS measurements (
     lafmin     REAL NOT NULL,
     lceq       REAL NOT NULL,
     lzeq       REAL NOT NULL,
-    lzpeak     REAL NOT NULL
+    lzpeak     REAL NOT NULL,
+    laimax     REAL,
+    lcpeak     REAL
 );
 CREATE INDEX IF NOT EXISTS idx_measurements_session ON measurements(session_id, t);
 
@@ -48,9 +53,11 @@ CREATE TABLE IF NOT EXISTS events (
 );
 """
 
-MEASUREMENT_FIELDS = ("t", "laeq", "lafmax", "lafmin", "lceq", "lzeq", "lzpeak")
+MEASUREMENT_FIELDS = ("t", "laeq", "lafmax", "lafmin", "lceq", "lzeq", "lzpeak", "laimax", "lcpeak")
 REPORT_THRESHOLDS = (60, 70, 80, 85, 90)
 MAX_SERIES_POINTS = 1500
+PERCENTILES = (1, 5, 10, 50, 90, 95, 99)          # Ln в отчета
+INTERVALS = (60, 300, 900, 3600)                   # LAeq по интервали, s
 
 # Стандарти за шумова доза: критерий (dB за 8 ч = 100%), обменен коефициент
 # (с колко dB повече времето се намалява наполовина) и праг, под който не се брои.
@@ -79,6 +86,39 @@ class _LeqAggregate:
 
 def energy_mean(levels: np.ndarray) -> float:
     return float(10 * np.log10(np.mean(10 ** (levels / 10))))
+
+
+def sound_exposure(levels: np.ndarray) -> float:
+    """SEL / LAE – енергията на събитието, отнесена към 1 s: 10·lg(Σ 10^(L/10)), всеки ред е 1 s."""
+    return float(10 * np.log10(np.sum(10 ** (levels / 10))))
+
+
+def interval_levels(t: np.ndarray, laeq: np.ndarray, seconds: int) -> list[dict]:
+    """LAeq по последователни интервали, подравнени към часовника (напр. 14:00, 14:15…)."""
+    offset = time.localtime(float(t[0])).tm_gmtoff
+    keys = np.floor((t + offset) / seconds).astype(np.int64)
+    out = []
+    for key in np.unique(keys):
+        mask = keys == key
+        out.append({"t": float(key * seconds - offset), "laeq": round(energy_mean(laeq[mask]), 1),
+                    "seconds": int(mask.sum())})
+    return out
+
+
+def environment_periods(t: np.ndarray, laeq: np.ndarray) -> dict:
+    """Lден, Lвечер, Lнощ (Наредба № 6/2006) и колко от всеки период е покрит от записа."""
+    periods = np.array([env_period(datetime.fromtimestamp(float(x)).hour) for x in t])
+    out = {}
+    for name, hours in ENV_HOURS.items():
+        mask = periods == name
+        n = int(mask.sum())
+        out[name] = {
+            "laeq": round(energy_mean(laeq[mask]), 1) if n else None,
+            "seconds": n,
+            "coverage": min(1.0, n / (hours * 3600)),
+        }
+    out["lden"] = lden(*(out[p]["laeq"] for p in ("day", "evening", "night")))
+    return out
 
 
 def noise_dose(laeq_seconds: np.ndarray, criterion: float, exchange: float, threshold: float) -> dict:
@@ -118,6 +158,8 @@ class Database:
         всяка миграция е безопасна и при повторно пускане (новите бази вече имат колоните от SCHEMA)."""
         migrations = [
             lambda: self._add_column("sessions", "note", "TEXT NOT NULL DEFAULT ''"),
+            lambda: (self._add_column("measurements", "laimax", "REAL"),
+                     self._add_column("measurements", "lcpeak", "REAL")),
         ]
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
         with self._conn:
@@ -171,7 +213,7 @@ class Database:
             self._conn.executemany(
                 f"INSERT INTO measurements (session_id, {', '.join(MEASUREMENT_FIELDS)}) "
                 f"VALUES (?, {', '.join('?' * len(MEASUREMENT_FIELDS))})",
-                [(session_id, *(r[f] for f in MEASUREMENT_FIELDS)) for r in rows],
+                [(session_id, *(r.get(f) for f in MEASUREMENT_FIELDS)) for r in rows],
             )
 
     def add_sources(self, session_id: int, results: list[dict]) -> None:
@@ -228,25 +270,37 @@ class Database:
         if not rows:
             return report
 
-        data = np.array([tuple(r) for r in rows], dtype=float)
-        t, laeq, lafmax, lafmin, lceq, lzeq, lzpeak = data.T
-        report["summary"] = {
+        # LAImax и LCpeak липсват в записи от стари версии – там остават NaN
+        data = np.array([[np.nan if v is None else v for v in r] for r in rows], dtype=float)
+        t, laeq, lafmax, lafmin, lceq, lzeq, lzpeak, laimax, lcpeak = data.T
+        nan_max = lambda x: None if np.all(np.isnan(x)) else float(np.nanmax(x))  # noqa: E731
+        summary = {
             "seconds": len(t),
             "laeq": energy_mean(laeq),
             "lafmax": float(lafmax.max()),
             "lafmin": float(lafmin.min()),
+            "laimax": nan_max(laimax),
             "lceq": energy_mean(lceq),
             "lzeq": energy_mean(lzeq),
             "lzpeak": float(lzpeak.max()),
+            "lcpeak": nan_max(lcpeak),
+            "lae": sound_exposure(laeq),
             # Статистически нива от едносекундните LAeq: L10 е надвишено 10% от времето и т.н.
-            "l10": float(np.percentile(laeq, 90)),
-            "l50": float(np.percentile(laeq, 50)),
-            "l90": float(np.percentile(laeq, 10)),
+            "ln": {str(p): float(np.percentile(laeq, 100 - p)) for p in PERCENTILES},
+            "loudest_at": float(t[int(np.argmax(lafmax))]),
         }
+        summary.update(l10=summary["ln"]["10"], l50=summary["ln"]["50"], l90=summary["ln"]["90"])
+        report["summary"] = summary
         report["above"] = [{"threshold": thr, "seconds": int(np.sum(laeq >= thr))} for thr in REPORT_THRESHOLDS]
         report["dose"] = {name: noise_dose(laeq, **std) for name, std in DOSE_STANDARDS.items()}
-        loudest = int(np.argmax(lafmax))
-        report["summary"]["loudest_at"] = float(t[loudest])
+        lex = lex_8h(summary["laeq"], len(t))
+        report["workplace"] = {"lex": lex, "lcpeak": summary["lcpeak"],
+                               "level": workplace_level(lex, summary["lcpeak"])}
+        report["environment"] = environment_periods(t, laeq)
+        report["intervals"] = {str(s): interval_levels(t, laeq, s) for s in INTERVALS}
+        for e in events:
+            mask = (t >= math.floor(e["started_at"])) & (t <= (e["ended_at"] or end) + 1)
+            e["sel"] = sound_exposure(laeq[mask]) if mask.any() else None
 
         # Хистограма през 2 dB
         lo = math.floor(laeq.min() / 2) * 2
