@@ -66,6 +66,7 @@
     .nav-link[aria-current="page"] { color: rgb(var(--ink)); }
     .side .nav-link[aria-current="page"] { background: rgb(var(--raised)); box-shadow: inset 3px 0 0 rgb(var(--accent)); }
     .bottom .nav-link[aria-current="page"] svg { color: rgb(var(--accent)); }
+    #nav-more .nav-link[aria-current="page"] { background: rgb(var(--raised)); }
 
     .chart-tip { position: absolute; z-index: 10; pointer-events: none; min-width: 7rem; padding: 0.45rem 0.6rem;
       border-radius: 8px; background: rgb(var(--raised)); box-shadow: 0 0 0 1px rgb(var(--line)), 0 8px 24px rgb(var(--shadow) / 0.3);
@@ -321,12 +322,15 @@
           </div>
         </section>
 
-        <!-- ============ ДОЗА ============ -->
-        <section data-section="dose" hidden>
+        <!-- ============ НОРМИ ============ -->
+        <section data-section="norms" hidden>
           <div class="mb-8">
-            <h1 class="text-3xl font-semibold tracking-tight" data-i18n>Шумова доза</h1>
-            <p class="mt-1 max-w-2xl text-ink2" data-i18n>Каква част от допустимия шум за 8-часов ден си получил от началото на сесията. Смята се по LAS – A-претегляне, бавен отклик.</p>
+            <h1 class="text-3xl font-semibold tracking-tight" data-i18n>Норми за шум</h1>
+            <p class="mt-1 max-w-2xl text-ink2" data-i18n>Колко шум си получил и дали са спазени нормите за работно място и околна среда.</p>
           </div>
+
+          <h2 class="text-xl font-semibold" data-i18n>Шумова доза</h2>
+          <p class="mb-4 mt-1 max-w-2xl text-sm text-ink3" data-i18n>Каква част от допустимия шум за 8-часов ден си получил от началото на сесията. Смята се по LAS – A-претегляне, бавен отклик.</p>
 
           <div class="grid gap-6 md:grid-cols-2">
             <div data-std="niosh" class="rounded-2xl bg-panel p-5 ring-1 ring-line">
@@ -477,12 +481,16 @@
           </template>
         </section>
 
-        <!-- ============ АЛАРМА ============ -->
-        <section data-section="alarm" hidden>
+        <!-- ============ НАСТРОЙКИ ============ -->
+        <section data-section="settings" hidden>
           <div class="mb-8">
-            <h1 class="text-3xl font-semibold tracking-tight" data-i18n>Аларма</h1>
-            <p class="mt-1 text-ink2" data-i18n>Сигнал, когато шумът остане над прага. Всяко превишаване се записва.</p>
+            <h1 class="text-3xl font-semibold tracking-tight" data-i18n>Настройки</h1>
+            <p class="mt-1 text-ink2" data-i18n>Аларма, външен вид, микрофон, калибриране и клавиши.</p>
           </div>
+
+          <div id="alarm-settings" class="mb-10 scroll-mt-20">
+          <h2 class="text-xl font-semibold" data-i18n>Аларма</h2>
+          <p class="mb-4 mt-1 text-sm text-ink3" data-i18n>Сигнал, когато шумът остане над прага. Всяко превишаване се записва.</p>
           <div class="grid gap-6 lg:grid-cols-2">
             <div class="space-y-5 rounded-2xl bg-panel p-5 ring-1 ring-line">
               <label class="flex items-center justify-between gap-3">
@@ -514,14 +522,9 @@
               <ul id="alarm-events" class="divide-y divide-line text-sm"></ul>
             </div>
           </div>
-        </section>
-
-        <!-- ============ НАСТРОЙКИ ============ -->
-        <section data-section="settings" hidden>
-          <div class="mb-8">
-            <h1 class="text-3xl font-semibold tracking-tight" data-i18n>Настройки</h1>
-            <p class="mt-1 text-ink2" data-i18n>Външен вид, микрофон, калибриране и клавиши.</p>
           </div>
+
+          <h2 class="mb-4 text-xl font-semibold" data-i18n>Общи</h2>
           <div class="grid gap-6 lg:grid-cols-2">
             <div class="space-y-6">
               <div class="space-y-4 rounded-2xl bg-panel p-5 ring-1 ring-line">
@@ -576,7 +579,7 @@
                 <h2 class="mb-3 font-medium" data-i18n>Клавиши</h2>
                 <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
                   <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line" data-i18n>Интервал</kbd></dt><dd class="text-ink2" data-i18n>старт и стоп</dd>
-                  <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">1</kbd>–<kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">6</kbd></dt><dd class="text-ink2" data-i18n>смяна на раздела</dd>
+                  <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">1</kbd>–<kbd id="kbd-last" class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">7</kbd></dt><dd class="text-ink2" data-i18n>смяна на раздела</dd>
                   <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">F</kbd></dt><dd class="text-ink2" data-i18n>цял екран</dd>
                   <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">R</kbd></dt><dd class="text-ink2" data-i18n>нулиране на сесията</dd>
                   <dt><kbd class="rounded bg-raised px-1.5 py-0.5 ring-1 ring-line">S</kbd></dt><dd class="text-ink2" data-i18n>снимка</dd>
@@ -596,7 +599,16 @@
   </div>
 
   <!-- Долна лента (телефон) -->
-  <nav id="nav-bottom" class="bottom fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-line bg-bg/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden" data-i18n-attr="aria-label" aria-label="Раздели"></nav>
+  <nav id="nav-bottom" class="bottom fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-line bg-bg/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden" data-i18n-attr="aria-label" aria-label="Раздели"></nav>
+
+  <!-- „Още“ на телефон: останалите раздели -->
+  <div id="more-sheet" hidden class="fixed inset-0 z-40 lg:hidden">
+    <div id="more-backdrop" class="absolute inset-0 bg-black/40"></div>
+    <div class="absolute inset-x-0 bottom-0 rounded-t-2xl bg-panel p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] ring-1 ring-line">
+      <div class="mx-auto mb-3 h-1 w-10 rounded-full bg-line"></div>
+      <nav id="nav-more" class="space-y-1" data-i18n-attr="aria-label" aria-label="Още раздели"></nav>
+    </div>
+  </div>
 
   <!-- Цял екран -->
   <div id="big" hidden class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-bg p-6 text-center">

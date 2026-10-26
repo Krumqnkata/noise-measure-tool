@@ -18,6 +18,7 @@ FFT_SIZE = 2048
 OCTAVE_FFT_SIZE = 8192                  # по-голям FFT, за да има смисъл при ниските ленти
 BUFFER_SIZE = OCTAVE_FFT_SIZE
 CLIP_SIZE = 43_200                      # ~0.98 s – колкото иска разпознаването на звуци
+HISTORY_SECONDS = 12                    # суров звук назад във времето (клипове, RT60)
 WAVEFORM_SAMPLES = 1024
 WAVEFORM_POINTS = 512
 NUM_BANDS = 128
@@ -62,6 +63,37 @@ def weighting_sos(kind: str, fs: int) -> np.ndarray:
 
 def power_db(mean_square: float) -> float:
     return max(10 * math.log10(max(mean_square, 1e-24)), DB_FLOOR)
+
+
+class RingBuffer:
+    """Кръгов буфер с фиксиран размер – записът не копира целия буфер всеки път."""
+
+    def __init__(self, size: int):
+        self._data = np.zeros(size, dtype=np.float32)
+        self._pos = 0          # къде ще се запише следващият семпъл
+        self.filled = 0        # колко семпъла има реално (до size)
+
+    def write(self, block: np.ndarray) -> None:
+        size = len(self._data)
+        block = block[-size:]
+        n = len(block)
+        end = self._pos + n
+        if end <= size:
+            self._data[self._pos:end] = block
+        else:
+            first = size - self._pos
+            self._data[self._pos:] = block[:first]
+            self._data[:n - first] = block[first:]
+        self._pos = end % size
+        self.filled = min(size, self.filled + n)
+
+    def last(self, n: int) -> np.ndarray:
+        """Последните n семпъла в хронологичен ред (копие)."""
+        n = min(n, len(self._data))
+        start = (self._pos - n) % len(self._data)
+        if start + n <= len(self._data):
+            return self._data[start:start + n].copy()
+        return np.concatenate((self._data[start:], self._data[:self._pos]))
 
 
 class _SecondAccumulator:
@@ -122,8 +154,8 @@ class AudioEngine:
     def _reset_state(self) -> None:
         with self._lock:
             self._raw = np.zeros(BUFFER_SIZE)
-            self._clip = np.zeros(CLIP_SIZE, dtype=np.float32)
-            self._zi ={w: np.zeros((sos.shape[0], 2)) for w, sos in self._sos.items()}
+            self._history = RingBuffer(HISTORY_SECONDS * SAMPLE_RATE)
+            self._zi = {w: np.zeros((sos.shape[0], 2)) for w, sos in self._sos.items()}
             self._ms = None          # текущ среден квадрат за всяка комбинация претегляне/време
             self._acc = _SecondAccumulator()
             self._seconds: list[dict] = []
@@ -151,7 +183,7 @@ class AudioEngine:
 
         with self._lock:
             self._raw = np.concatenate((self._raw[len(block):], block))
-            self._clip = np.concatenate((self._clip[len(block):], block.astype(np.float32)))
+            self._history.write(block)
             self._ms = ms
             if acc.n >= SAMPLE_RATE:
                 self._seconds.append(self._finish_second(acc))
@@ -215,8 +247,12 @@ class AudioEngine:
 
     def clip(self) -> np.ndarray:
         """Последната ~1 секунда звук (за разпознаването на източника)."""
+        return self.recent_audio(CLIP_SIZE / SAMPLE_RATE)
+
+    def recent_audio(self, seconds: float) -> np.ndarray:
+        """Суровият звук за последните `seconds` секунди (до HISTORY_SECONDS)."""
         with self._lock:
-            return self._clip.copy()
+            return self._history.last(int(seconds * SAMPLE_RATE))
 
     def pop_seconds(self) -> list[dict]:
         """Връща и изчиства натрупаните едносекундни обобщения."""

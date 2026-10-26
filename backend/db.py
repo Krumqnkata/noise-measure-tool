@@ -108,12 +108,22 @@ class Database:
         self._migrate()
         self._close_interrupted()
 
+    def _add_column(self, table: str, column: str, declaration: str) -> None:
+        columns = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+        if column not in columns:
+            self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
     def _migrate(self) -> None:
-        """Добавя колони, появили се в по-нови версии, към стари бази."""
-        columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(sessions)")}
-        if "note" not in columns:
-            with self._conn:
-                self._conn.execute("ALTER TABLE sessions ADD COLUMN note TEXT NOT NULL DEFAULT ''")
+        """Обновява стари бази до текущата схема. Версията се пази в PRAGMA user_version;
+        всяка миграция е безопасна и при повторно пускане (новите бази вече имат колоните от SCHEMA)."""
+        migrations = [
+            lambda: self._add_column("sessions", "note", "TEXT NOT NULL DEFAULT ''"),
+        ]
+        version = self._conn.execute("PRAGMA user_version").fetchone()[0]
+        with self._conn:
+            for step in migrations[version:]:
+                step()
+            self._conn.execute(f"PRAGMA user_version = {len(migrations)}")
 
     def _close_interrupted(self) -> None:
         """Записи, останали „отворени“ след срив, приключват при последното си измерване."""

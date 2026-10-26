@@ -2,14 +2,17 @@
 // тема и език
 
 const ICON = (paths) => `<svg viewBox="0 0 24 24" class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+// primary – разделите в долната лента на телефона; останалите са под „Още“
 const SECTIONS = [
-  { id: 'meter', label: 'Ниво', icon: ICON('<path d="M3.5 16a8.5 8.5 0 0 1 17 0"/><path d="M12 16l3.5-5.5"/><circle cx="12" cy="16" r="1.2"/>') },
-  { id: 'analysis', label: 'Анализ', icon: ICON('<path d="M4 20V11M9 20V5M14 20v-8M19 20V8"/>') },
-  { id: 'dose', label: 'Доза', icon: ICON('<path d="M12 3 5 6v5c0 4.4 3 8.2 7 10 4-1.8 7-5.6 7-10V6l-7-3Z"/><path d="M12 8v4l2.5 1.5"/>') },
-  { id: 'records', label: 'Записи', icon: ICON('<circle cx="6.5" cy="7" r="2.5"/><path d="M12 7h8M4 13h16M4 18h16"/>') },
-  { id: 'alarm', label: 'Аларма', icon: ICON('<path d="M6 16v-5a6 6 0 1 1 12 0v5l1.5 2h-15L6 16Z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>') },
+  { id: 'meter', label: 'Ниво', primary: true, icon: ICON('<path d="M3.5 16a8.5 8.5 0 0 1 17 0"/><path d="M12 16l3.5-5.5"/><circle cx="12" cy="16" r="1.2"/>') },
+  { id: 'analysis', label: 'Анализ', primary: true, icon: ICON('<path d="M4 20V11M9 20V5M14 20v-8M19 20V8"/>') },
+  { id: 'norms', label: 'Норми', primary: true, icon: ICON('<path d="M12 3 5 6v5c0 4.4 3 8.2 7 10 4-1.8 7-5.6 7-10V6l-7-3Z"/><path d="M12 8v4l2.5 1.5"/>') },
+  { id: 'records', label: 'Записи', primary: true, icon: ICON('<circle cx="6.5" cy="7" r="2.5"/><path d="M12 7h8M4 13h16M4 18h16"/>') },
   { id: 'settings', label: 'Настройки', icon: ICON('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>') },
 ];
+// Стари адреси и подраздели: адрес → [раздел, елемент, до който да се превърти]
+const ROUTE_ALIASES = { dose: ['norms'], alarm: ['settings', 'alarm-settings'] };
+const MORE_ICON = ICON('<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>');
 const SUN = ICON('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>');
 const MOON = ICON('<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/>');
 
@@ -17,46 +20,62 @@ let currentSectionId = null;
 
 // ---------- навигация ----------
 
-function buildNav() {
-  const side = $('nav-side'), bottom = $('nav-bottom');
-  side.replaceChildren();
-  bottom.replaceChildren();
-  SECTIONS.forEach((s, i) => {
-    const label = t(s.label);
-    const a = document.createElement('a');
-    a.href = `#${s.id}`;
-    a.dataset.section = s.id;
-    a.title = `${label} (${i + 1})`;
+function navLink(s, kind, index) {
+  const label = t(s.label);
+  const a = document.createElement('a');
+  a.href = `#${s.id}`;
+  a.dataset.section = s.id;
+  const badge = '<span class="nav-badge hidden h-2 w-2 rounded-full bg-crit"></span>';
+  if (kind === 'bottom') {
+    a.className = 'nav-link relative flex flex-col items-center gap-1 py-2 text-[11px] text-ink3';
+    a.innerHTML = `${s.icon}<span class="max-w-full truncate px-0.5"></span>${badge}`;
+    a.lastElementChild.classList.add('absolute', 'right-[calc(50%-14px)]', 'top-1.5');
+  } else {
+    a.title = `${label} (${index + 1})`;
     a.className = 'nav-link flex items-center gap-3 rounded-lg px-3 py-2 text-ink2 transition-colors hover:bg-panel hover:text-ink';
-    a.innerHTML = `${s.icon}<span></span><span class="nav-badge ml-auto hidden h-2 w-2 rounded-full bg-crit"></span>`;
-    a.children[1].textContent = label;
-    side.appendChild(a);
-
-    const b = document.createElement('a');
-    b.href = `#${s.id}`;
-    b.dataset.section = s.id;
-    b.className = 'nav-link relative flex flex-col items-center gap-1 py-2 text-[11px] text-ink3';
-    b.innerHTML = `${s.icon}<span class="max-w-full truncate px-0.5"></span><span class="nav-badge absolute right-[calc(50%-14px)] top-1.5 hidden h-2 w-2 rounded-full bg-crit"></span>`;
-    b.children[1].textContent = label;
-    bottom.appendChild(b);
-  });
+    a.innerHTML = `${s.icon}<span></span>${badge}`;
+    a.lastElementChild.classList.add('ml-auto');
+  }
+  a.children[1].textContent = label;
+  return a;
 }
 
+function buildNav() {
+  $('nav-side').replaceChildren(...SECTIONS.map((s, i) => navLink(s, 'side', i)));
+  $('nav-more').replaceChildren(...SECTIONS.filter((s) => !s.primary).map((s) => navLink(s, 'more', SECTIONS.indexOf(s))));
+  const more = document.createElement('button');
+  more.id = 'nav-more-button';
+  more.className = 'nav-link relative flex flex-col items-center gap-1 py-2 text-[11px] text-ink3';
+  more.innerHTML = `${MORE_ICON}<span></span><span class="nav-badge absolute right-[calc(50%-14px)] top-1.5 hidden h-2 w-2 rounded-full bg-crit"></span>`;
+  more.children[1].textContent = t('Още');
+  more.addEventListener('click', () => { $('more-sheet').hidden = false; });
+  $('nav-bottom').replaceChildren(...SECTIONS.filter((s) => s.primary).map((s) => navLink(s, 'bottom')), more);
+  $('kbd-last').textContent = SECTIONS.length;
+}
+$('more-backdrop').addEventListener('click', () => { $('more-sheet').hidden = true; });
+
 function route() {
-  const [id, param] = location.hash.replace(/^#/, '').split('/');
+  let [id, param] = location.hash.replace(/^#/, '').split('/');
+  let scrollTarget = null;
+  if (ROUTE_ALIASES[id]) [id, scrollTarget] = ROUTE_ALIASES[id];
   const section = SECTIONS.find((s) => s.id === id) ? id : 'meter';
   const changed = section !== currentSectionId;
   currentSectionId = section;
+  $('more-sheet').hidden = true;
   document.querySelectorAll('[data-section]').forEach((el) => {
     if (el.tagName === 'SECTION') el.hidden = el.dataset.section !== section;
     else if (el.dataset.section === section) el.setAttribute('aria-current', 'page');
     else el.removeAttribute('aria-current');
   });
+  // „Още“ свети, когато е отворен раздел от листа
+  if (SECTIONS.find((s) => s.id === section).primary) $('nav-more-button').removeAttribute('aria-current');
+  else $('nav-more-button').setAttribute('aria-current', 'page');
   updateTitle();
   if (changed) { window.scrollTo(0, 0); showError(''); }
+  if (scrollTarget) $(scrollTarget).scrollIntoView();
   if (section === 'records') recordsOnShow(param);
   setBadge('records', !!recording);
-  setBadge('alarm', alarmActive);
+  setBadge('settings', alarmActive);
   dirty = true;
 }
 window.addEventListener('hashchange', route);
@@ -66,9 +85,13 @@ function updateTitle() {
   document.title = !s || s.id === 'meter' ? t('Шумомер') : `${t(s.label)} – ${t('Шумомер')}`;
 }
 
-// Червена точка по раздела, където има нещо активно
+// Червена точка по раздела, където има нещо активно (и по „Още“, ако разделът е там)
+const badges = {};
 function setBadge(section, on) {
+  badges[section] = on;
   document.querySelectorAll(`.nav-link[data-section="${section}"] .nav-badge`).forEach((el) => el.classList.toggle('hidden', !on));
+  const moreOn = SECTIONS.some((s) => !s.primary && badges[s.id]);
+  $('nav-more-button')?.querySelector('.nav-badge').classList.toggle('hidden', !moreOn);
 }
 
 // ---------- сегментирани бутони ----------
@@ -306,7 +329,7 @@ function onAlarm(a) {
   const was = alarmActive;
   alarmActive = a.active;
   $('alarm-banner').classList.toggle('hidden', !a.active);
-  setBadge('alarm', a.active);
+  setBadge('settings', a.active);
   if (a.active) {
     $('alarm-text').textContent = t('Шумът е над {thr} dB от {time}, най-много {max} dB.', {
       thr: a.threshold, time: fmtTime(a.started_at), max: fmtDb(a.max_level),
