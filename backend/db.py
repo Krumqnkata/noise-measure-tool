@@ -18,7 +18,17 @@ CREATE TABLE IF NOT EXISTS sessions (
     ended_at           REAL,
     calibration_offset REAL NOT NULL,
     device             TEXT,
-    note               TEXT NOT NULL DEFAULT ''
+    note               TEXT NOT NULL DEFAULT '',
+    schedule_id        INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS schedules (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    name    TEXT NOT NULL,
+    days    TEXT NOT NULL,          -- дни от седмицата: 0 = понеделник … 6 = неделя, напр. "0123456"
+    start_time TEXT NOT NULL,       -- "23:00"
+    end_time   TEXT NOT NULL,       -- "07:00" (може да е след полунощ)
+    enabled INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS measurements (
@@ -58,6 +68,14 @@ REPORT_THRESHOLDS = (60, 70, 80, 85, 90)
 MAX_SERIES_POINTS = 1500
 PERCENTILES = (1, 5, 10, 50, 90, 95, 99)          # Ln в отчета
 INTERVALS = (60, 300, 900, 3600)                   # LAeq по интервали, s
+
+# Сън – насоките на СЗО: в спалнята LAFmax не бива да минава 45 dB(A) повече от 10–15 пъти
+# на нощ (Guidelines for Community Noise, 1999); средно навън Lnight ≤ 40 dB (Night Noise
+# Guidelines for Europe, 2009).
+SLEEP_EVENT_LEVEL = 45.0
+SLEEP_EVENT_GAP = 5          # s – по-близки превишавания са едно събитие
+SLEEP_MAX_EVENTS = 10
+SLEEP_LNIGHT = 40.0
 
 # Стандарти за шумова доза: критерий (dB за 8 ч = 100%), обменен коефициент
 # (с колко dB повече времето се намалява наполовина) и праг, под който не се брои.
@@ -103,6 +121,37 @@ def interval_levels(t: np.ndarray, laeq: np.ndarray, seconds: int) -> list[dict]
         out.append({"t": float(key * seconds - offset), "laeq": round(energy_mean(laeq[mask]), 1),
                     "seconds": int(mask.sum())})
     return out
+
+
+def sleep_analysis(t: np.ndarray, laeq: np.ndarray, lafmax: np.ndarray, sources: list[tuple]) -> dict:
+    """Шумови събития, които могат да събудят: LAFmax ≥ 45 dB(A), обединени ако са на ≤ 5 s."""
+    over = np.nonzero(lafmax >= SLEEP_EVENT_LEVEL)[0]
+    events = []
+    for i in over:
+        if events and t[i] - events[-1]["end"] <= SLEEP_EVENT_GAP:
+            ev = events[-1]
+            ev["end"] = float(t[i])
+            if lafmax[i] > ev["max"]:
+                ev["max"], ev["at"] = float(lafmax[i]), float(t[i])
+        else:
+            events.append({"start": float(t[i]), "end": float(t[i]), "max": float(lafmax[i]), "at": float(t[i])})
+
+    # Източникът – най-честата разпозната категория по време на събитието
+    src_t = np.array([s[0] for s in sources]) if sources else np.array([])
+    for ev in events:
+        ev["source"] = None
+        if len(src_t):
+            mask = (src_t >= ev["start"] - 1) & (src_t <= ev["end"] + 1)
+            cats = [sources[k][1] for k in np.nonzero(mask)[0] if sources[k][1] not in ("silence", "unknown")]
+            if cats:
+                ev["source"] = max(set(cats), key=cats.count)
+    return {
+        "threshold": SLEEP_EVENT_LEVEL,
+        "max_events": SLEEP_MAX_EVENTS,
+        "lnight_guideline": SLEEP_LNIGHT,
+        "laeq": energy_mean(laeq),
+        "events": events,
+    }
 
 
 def environment_periods(t: np.ndarray, laeq: np.ndarray) -> dict:
@@ -160,6 +209,7 @@ class Database:
             lambda: self._add_column("sessions", "note", "TEXT NOT NULL DEFAULT ''"),
             lambda: (self._add_column("measurements", "laimax", "REAL"),
                      self._add_column("measurements", "lcpeak", "REAL")),
+            lambda: self._add_column("sessions", "schedule_id", "INTEGER"),
         ]
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
         with self._conn:
@@ -181,11 +231,12 @@ class Database:
 
     # --- записи -------------------------------------------------------------
 
-    def create_session(self, name: str, calibration_offset: float, device: str | None) -> int:
+    def create_session(self, name: str, calibration_offset: float, device: str | None,
+                       schedule_id: int | None = None) -> int:
         with self._lock, self._conn:
             cur = self._conn.execute(
-                "INSERT INTO sessions (name, started_at, calibration_offset, device) VALUES (?, ?, ?, ?)",
-                (name, time.time(), calibration_offset, device),
+                "INSERT INTO sessions (name, started_at, calibration_offset, device, schedule_id) VALUES (?, ?, ?, ?, ?)",
+                (name, time.time(), calibration_offset, device, schedule_id),
             )
             return cur.lastrowid
 
@@ -236,6 +287,91 @@ class Database:
         total = sum(r["seconds"] for r in rows)
         return [{"category": r["category"], "seconds": r["seconds"], "share": r["seconds"] / total} for r in rows]
 
+    def source_points(self, session_id: int) -> list[tuple]:
+        with self._lock:
+            return [tuple(r) for r in self._conn.execute(
+                "SELECT t, category FROM sources WHERE session_id = ? ORDER BY t", (session_id,))]
+
+    # --- табло --------------------------------------------------------------
+
+    def dashboard(self, days: int, now: float | None = None) -> dict:
+        """Дългосрочен преглед от всички записи: карта ден × час, профил по час от
+        седмицата (за прогноза) и водещ източник по час. Работи с минутни LAeq."""
+        now = now or time.time()
+        since = now - days * 86400
+        with self._lock:
+            minutes = self._conn.execute(
+                """SELECT CAST(t / 60 AS INTEGER) AS m, leq(laeq) AS laeq FROM measurements
+                   WHERE t >= ? GROUP BY m ORDER BY m""", (since,)).fetchall()
+            src = self._conn.execute(
+                "SELECT t, category FROM sources WHERE t >= ? AND category NOT IN ('silence', 'unknown')",
+                (since,)).fetchall()
+
+        cells: dict[tuple[str, int], list[float]] = {}
+        week: list[list[float]] = [[] for _ in range(168)]   # понеделник 0 ч … неделя 23 ч
+        dates = set()
+        for row in minutes:
+            dt = datetime.fromtimestamp(row["m"] * 60)
+            key = (dt.strftime("%Y-%m-%d"), dt.hour)
+            cells.setdefault(key, []).append(row["laeq"])
+            week[dt.weekday() * 24 + dt.hour].append(row["laeq"])
+            dates.add(key[0])
+
+        heatmap = [{"date": d, "hour": h, "laeq": round(energy_mean(np.array(v)), 1), "minutes": len(v)}
+                   for (d, h), v in sorted(cells.items())]
+        profile = [None if len(v) < 10 else {
+            "median": round(float(np.median(v)), 1),
+            "p10": round(float(np.percentile(v, 10)), 1),
+            "p90": round(float(np.percentile(v, 90)), 1),
+            "minutes": len(v),
+        } for v in week]
+
+        # Прогноза: следващите 24 часа по профила (смислено едва след седмица данни).
+        # Часовете без данни остават празни (median = None), за да не се свързват на графиката.
+        forecast = []
+        if len(dates) >= 7:
+            start = datetime.fromtimestamp(now).replace(minute=0, second=0, microsecond=0)
+            for i in range(1, 25):
+                dt = datetime.fromtimestamp(start.timestamp() + i * 3600)
+                p = profile[dt.weekday() * 24 + dt.hour] or {"median": None, "p10": None, "p90": None, "minutes": 0}
+                forecast.append({"t": dt.timestamp(), **p})
+
+        by_hour: dict[int, dict[str, int]] = {}
+        for row in src:
+            hour = datetime.fromtimestamp(row["t"]).hour
+            by_hour.setdefault(hour, {}).setdefault(row["category"], 0)
+            by_hour[hour][row["category"]] += 1
+        sources = []
+        for hour, counts in sorted(by_hour.items()):
+            category, n = max(counts.items(), key=lambda item: item[1])
+            sources.append({"hour": hour, "category": category, "share": n / sum(counts.values())})
+
+        return {"days": days, "dates": sorted(dates), "days_covered": len(dates), "heatmap": heatmap,
+                "forecast": forecast, "sources_by_hour": sources}
+
+    # --- график -------------------------------------------------------------
+
+    def schedules(self) -> list[dict]:
+        with self._lock:
+            return [dict(r) for r in self._conn.execute("SELECT * FROM schedules ORDER BY start_time")]
+
+    def save_schedule(self, data: dict, schedule_id: int | None = None) -> int:
+        fields = ("name", "days", "start_time", "end_time", "enabled")
+        with self._lock, self._conn:
+            if schedule_id is None:
+                cur = self._conn.execute(
+                    f"INSERT INTO schedules ({', '.join(fields)}) VALUES (?, ?, ?, ?, ?)",
+                    tuple(data[f] for f in fields))
+                return cur.lastrowid
+            self._conn.execute(
+                f"UPDATE schedules SET {', '.join(f'{f} = ?' for f in fields)} WHERE id = ?",
+                (*(data[f] for f in fields), schedule_id))
+            return schedule_id
+
+    def delete_schedule(self, schedule_id: int) -> bool:
+        with self._lock, self._conn:
+            return self._conn.execute("DELETE FROM schedules WHERE id = ?", (schedule_id,)).rowcount > 0
+
     def list_sessions(self) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
@@ -266,7 +402,7 @@ class Database:
         end = session["ended_at"] or time.time()
         report = {"session": session, "duration": end - session["started_at"], "events": events,
                   "summary": None, "series": None, "histogram": None, "above": None, "dose": None,
-                  "sources": self.sources(session_id)}
+                  "sources": self.sources(session_id), "sleep": None}
         if not rows:
             return report
 
@@ -297,6 +433,10 @@ class Database:
         report["workplace"] = {"lex": lex, "lcpeak": summary["lcpeak"],
                                "level": workplace_level(lex, summary["lcpeak"])}
         report["environment"] = environment_periods(t, laeq)
+        # Нощен анализ – когато записът е предимно през нощта или е по график
+        night_share = report["environment"]["night"]["seconds"] / len(t)
+        if night_share >= 0.5 or session.get("schedule_id"):
+            report["sleep"] = sleep_analysis(t, laeq, lafmax, self.source_points(session_id))
         report["intervals"] = {str(s): interval_levels(t, laeq, s) for s in INTERVALS}
         for e in events:
             mask = (t >= math.floor(e["started_at"])) & (t <= (e["ended_at"] or end) + 1)

@@ -26,10 +26,12 @@ from pydantic import BaseModel, Field
 import numpy as np
 
 from audio import SAMPLE_RATE, AudioEngine, sd
+from certs import ensure_certificate, local_addresses
 from classifier import SoundClassifier
 from db import Database
 from norms import all_norms
 from room import DECAY_SECONDS, measure_rt60
+from scheduler import active_schedule
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT / "static"
@@ -47,6 +49,7 @@ DEFAULT_CALIBRATION = 120.0
 
 DEFAULT_CONFIG = {
     "calibration_offset": DEFAULT_CALIBRATION,
+    "calibration_offsets": {},      # офсет за всеки източник: компютърен микрофон, телефон…
     "device": None,
     "alarm_enabled": False,
     "alarm_threshold": 85.0,
@@ -141,7 +144,22 @@ recording: dict | None = None   # текущият запис в базата: i
 clients: set[WebSocket] = set()
 
 
+def source_key() -> str:
+    """Ключ на текущия източник – всеки има свой калибрационен офсет."""
+    if engine.external:
+        return f"browser:{engine.external}"
+    if engine.demo:
+        return "demo"
+    return f"device:{config['device']}"
+
+
+def apply_source_calibration() -> None:
+    config["calibration_offset"] = config["calibration_offsets"].get(source_key(), DEFAULT_CALIBRATION)
+
+
 def device_name() -> str | None:
+    if engine.external:
+        return engine.external
     if engine.demo:
         return "demo"
     if sd is None:
@@ -160,6 +178,8 @@ def status_message() -> dict:
         "device": config["device"],
         "calibration_offset": config["calibration_offset"],
         "default_calibration": DEFAULT_CALIBRATION,
+        "source": {"kind": "browser" if engine.external else "demo" if engine.demo else "device",
+                   "name": engine.external},
         "error": engine.error,
         "classifier": classifier.status(),
         "recording": recording,
@@ -194,8 +214,12 @@ def flush_seconds() -> None:
 async def broadcaster() -> None:
     loop = asyncio.get_running_loop()
     classifier_state = classifier.status()
+    next_schedule_check = loop.time()
     while True:
         started = loop.time()
+        if started >= next_schedule_check:
+            next_schedule_check = started + SCHEDULE_CHECK
+            await check_schedules()
         if engine.running:
             flush_seconds()
             change = alarm.update(engine.level("A", "F"), time.time())
@@ -216,13 +240,41 @@ async def broadcaster() -> None:
         await asyncio.sleep(max(0.0, SEND_INTERVAL - (loop.time() - started)))
 
 
-def start_recording(name: str | None) -> None:
+def start_recording(name: str | None, schedule_id: int | None = None) -> None:
     global recording
     if recording:
         return
     name = (name or "").strip() or f"Запис {datetime.now():%Y-%m-%d %H:%M}"
-    session_id = db.create_session(name, config["calibration_offset"], device_name())
-    recording = {"id": session_id, "name": name, "started_at": db.get_session(session_id)["started_at"]}
+    session_id = db.create_session(name, config["calibration_offset"], device_name(), schedule_id)
+    recording = {"id": session_id, "name": name, "started_at": db.get_session(session_id)["started_at"],
+                 "schedule_id": schedule_id}
+
+
+SCHEDULE_CHECK = 30.0          # s
+schedule_skip: int | None = None   # прозорец, чийто запис потребителят е спрял ръчно
+
+
+async def check_schedules() -> None:
+    """Пуска запис, когато започне прозорец от графика, и го спира, когато свърши.
+    Ръчно пуснат запис не се пипа."""
+    global schedule_skip
+    active = active_schedule(db.schedules(), datetime.now())
+    if schedule_skip is not None and (active is None or active["id"] != schedule_skip):
+        schedule_skip = None
+    if recording and recording.get("schedule_id") and (active is None or active["id"] != recording["schedule_id"]):
+        finished = dict(recording)
+        stop_recording()
+        await broadcast(status_message())
+        await broadcast({"type": "schedule_done", "session_id": finished["id"], "name": finished["name"]})
+    if active and not recording and schedule_skip != active["id"]:
+        if not engine.running:
+            try:
+                engine.start()
+            except Exception as exc:
+                print(f"Записът по график не може да започне: {exc}")
+                return
+        start_recording(f"{active['name']} {datetime.now():%d.%m.%Y}", schedule_id=active["id"])
+        await broadcast(status_message())
 
 
 def stop_recording() -> None:
@@ -291,11 +343,25 @@ class SessionUpdateIn(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+class ScheduleIn(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    days: str = Field(pattern=r"^[0-6]{1,7}$")
+    start_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    end_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    enabled: bool = True
+
+
 # --- страници ---------------------------------------------------------------
 
 @app.get("/")
 async def index():
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/report/{session_id}")
+async def report_page(session_id: int):
+    """Протокол за печат / PDF (данните се зареждат от /api/sessions/{id})."""
+    return FileResponse(STATIC_DIR / "report.html")
 
 
 @app.get("/sessions")
@@ -396,6 +462,7 @@ async def set_device(body: DeviceIn):
                 pass
         await broadcast(status_message())
         raise api_error(400, "device_open", error=str(exc))
+    apply_source_calibration()
     save_config(config)
     await broadcast(status_message())
     return status_message()
@@ -406,6 +473,7 @@ async def set_calibration(body: CalibrationIn):
     if not math.isfinite(body.offset) or abs(body.offset) > 200:
         raise api_error(400, "offset_range")
     config["calibration_offset"] = round(body.offset, 2)
+    config["calibration_offsets"][source_key()] = config["calibration_offset"]
     save_config(config)
     await broadcast(status_message())
     return status_message()
@@ -466,9 +534,50 @@ async def recording_start(body: RecordingIn):
 
 @app.post("/api/recording/stop")
 async def recording_stop():
+    global schedule_skip
+    if recording and recording.get("schedule_id"):
+        schedule_skip = recording["schedule_id"]   # да не го пусне отново в същия прозорец
     stop_recording()
     await broadcast(status_message())
     return status_message()
+
+
+@app.get("/api/dashboard")
+async def dashboard(days: int = 30):
+    return await asyncio.to_thread(db.dashboard, max(1, min(days, 365)))
+
+
+# --- график ---------------------------------------------------------------------
+
+@app.get("/api/schedules")
+async def list_schedules():
+    return {"schedules": db.schedules()}
+
+
+@app.post("/api/schedules")
+async def create_schedule(body: ScheduleIn):
+    if body.start_time == body.end_time:
+        raise api_error(400, "schedule_empty")
+    db.save_schedule(body.model_dump())
+    await check_schedules()
+    return {"schedules": db.schedules()}
+
+
+@app.put("/api/schedules/{schedule_id}")
+async def update_schedule(schedule_id: int, body: ScheduleIn):
+    if body.start_time == body.end_time:
+        raise api_error(400, "schedule_empty")
+    db.save_schedule(body.model_dump(), schedule_id)
+    await check_schedules()
+    return {"schedules": db.schedules()}
+
+
+@app.delete("/api/schedules/{schedule_id}")
+async def delete_schedule(schedule_id: int):
+    if not db.delete_schedule(schedule_id):
+        raise api_error(404, "not_found")
+    await check_schedules()
+    return {"schedules": db.schedules()}
 
 
 @app.get("/api/sessions")
@@ -552,6 +661,58 @@ async def websocket_endpoint(ws: WebSocket):
         clients.discard(ws)
 
 
+mic_client: WebSocket | None = None
+
+
+@app.websocket("/ws/mic")
+async def mic_endpoint(ws: WebSocket):
+    """Микрофонът на телефона: браузърът праща Float32 PCM (моно, 44.1 kHz) на блокове.
+    Докато връзката е отворена, това е източникът на звука за всички."""
+    global mic_client
+    await ws.accept()
+    if mic_client is not None:
+        await ws.close(code=4409)    # вече има свързан микрофон
+        return
+    mic_client = ws
+    try:
+        hello = json.loads(await ws.receive_text())
+        if int(hello.get("rate", 0)) != SAMPLE_RATE:
+            await ws.close(code=4400)
+            return
+        flush_seconds()
+        engine.use_external(str(hello.get("name") or "browser")[:80])
+        apply_source_calibration()
+        await broadcast(status_message())
+        while True:
+            engine.push_external(np.frombuffer(await ws.receive_bytes(), dtype=np.float32))
+    except (WebSocketDisconnect, RuntimeError, ValueError):
+        pass
+    finally:
+        if mic_client is ws:
+            mic_client = None
+            if engine.external:
+                # Връщаме се към собствения микрофон (или демо сигнала)
+                flush_seconds()
+                engine.release_external()
+                apply_source_calibration()
+                try:
+                    engine.start()
+                except Exception as exc:
+                    print(f"Микрофонът не може да се отвори отново: {exc}")
+                await broadcast(status_message())
+
+
+@app.get("/manifest.webmanifest")
+async def manifest():
+    return FileResponse(STATIC_DIR / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+async def service_worker():
+    # От корена, за да обхваща цялото приложение, а не само /static/
+    return FileResponse(STATIC_DIR / "sw.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+
+
 def main() -> None:
     global engine, classifier, db, config, CONFIG_PATH
     parser = argparse.ArgumentParser(description="Шумомер в реално време")
@@ -561,6 +722,8 @@ def main() -> None:
     parser.add_argument("--db", default=str(DB_PATH), help="път до файла на базата (по подразбиране noise.db)")
     parser.add_argument("--config", default=str(CONFIG_PATH), help="път до настройките (по подразбиране config.json)")
     parser.add_argument("--no-classifier", action="store_true", help="без разпознаване на източника на шума")
+    parser.add_argument("--https", action="store_true",
+                        help="https със самоподписан сертификат – нужно за микрофона на телефона")
     args = parser.parse_args()
 
     # Конзолата на Windows може да е с кодиране без кирилица (напр. cp1252)
@@ -572,8 +735,23 @@ def main() -> None:
     db = Database(args.db)
     engine = AudioEngine(demo=args.demo, config=config)
     classifier = SoundClassifier(engine, MODEL_PATH, enabled=not args.no_classifier)
-    print(f"Шумомер: http://localhost:{args.port}" + ("  (демо режим)" if args.demo else ""))
-    uvicorn.run(app, host=args.host, port=args.port)
+    # Досегашният единичен офсет става офсетът на текущия източник
+    config["calibration_offsets"].setdefault(source_key(), config["calibration_offset"])
+    apply_source_calibration()
+
+    ssl = {}
+    scheme = "http"
+    if args.https:
+        try:
+            cert, key = ensure_certificate(ROOT / "certs")
+        except ImportError:
+            sys.exit("За --https е нужен пакетът cryptography: pip install -r requirements.txt")
+        ssl = {"ssl_certfile": str(cert), "ssl_keyfile": str(key)}
+        scheme = "https"
+    print(f"Шумомер: {scheme}://localhost:{args.port}" + ("  (демо режим)" if args.demo else ""))
+    for address in local_addresses():
+        print(f"  от телефон в същата мрежа: {scheme}://{address}:{args.port}")
+    uvicorn.run(app, host=args.host, port=args.port, **ssl)
 
 
 if __name__ == "__main__":

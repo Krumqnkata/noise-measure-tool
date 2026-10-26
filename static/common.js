@@ -198,6 +198,7 @@ function errorText(detail) {
     not_running: 'Първо пусни измерването (бутона Старт).',
     busy: 'Вече тече измерване – изчакай го.',
     no_impulse: 'Не долових плясък. Пляскай по-силно и по-близо до микрофона.',
+    schedule_empty: 'Началото и краят на графика не може да съвпадат.',
   };
   return t(messages[detail.code] || detail.code, detail);
 }

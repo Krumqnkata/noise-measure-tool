@@ -123,6 +123,7 @@ class AudioEngine:
         self.config = config
         self.running = False
         self.error: str | None = None
+        self.external: str | None = None   # име на външен източник (микрофон в браузър), ако има
 
         self._lock = threading.Lock()
         self._sos = {"A": weighting_sos("A", SAMPLE_RATE), "C": weighting_sos("C", SAMPLE_RATE)}
@@ -246,6 +247,11 @@ class AudioEngine:
         if self.running:
             return
         self._reset_state()
+        if self.external:
+            # Звукът идва отвън (push_external) – тук няма какво да се отваря
+            self.running = True
+            self.error = None
+            return
         try:
             if self.demo:
                 self._demo_stop.clear()
@@ -280,6 +286,23 @@ class AudioEngine:
             self._demo_thread.join()
             self._demo_thread = None
         self.running = False
+
+    # --- външен източник (микрофонът на телефона през браузъра) ----------------
+
+    def use_external(self, name: str) -> None:
+        """Спира собствения източник и приема звука от push_external()."""
+        self.stop()
+        self.external = name
+        self.start()
+
+    def release_external(self) -> None:
+        if self.external:
+            self.stop()
+            self.external = None
+
+    def push_external(self, block: np.ndarray) -> None:
+        if self.external and self.running and len(block):
+            self._push(np.clip(block.astype(np.float64), -1.0, 1.0))
 
     def clip(self) -> np.ndarray:
         """Последната ~1 секунда звук (за разпознаването на източника)."""

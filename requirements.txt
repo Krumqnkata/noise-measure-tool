@@ -3,3 +3,4 @@ uvicorn[standard]>=0.29
 numpy>=1.26
 scipy>=1.11
 sounddevice>=0.4.6
+cryptography>=42

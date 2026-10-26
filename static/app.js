@@ -145,6 +145,8 @@ window.onThemeChange = function onThemeChange() {
   $('side-theme').querySelector('span span').textContent = dark ? t('Светла') : t('Тъмна');
   dirty = true;
   redrawReport();
+  redrawDashboard();
+  drawRt();
 };
 
 function setLanguage(next) {
@@ -157,11 +159,15 @@ function setLanguage(next) {
   renderDoseTable();
   renderNormsStatic();
   if (rtResult) renderRt(); else renderRtTargets();
+  renderDayButtons();
+  if (currentSectionId === 'records') loadSchedules();
+  if (!$('records-dashboard').hidden) loadDashboard();
   renderLangSeg();
   onThemeChange();
   $('side-lang').textContent = lang === 'bg' ? 'English' : 'Български';
   $('offset-default').textContent = t('Типичен ({n})', { n: defaultCalibration });
-  $('mode-label').textContent = demoMode ? t('Демо режим: сигналът е симулиран, микрофонът не се ползва.') : t('Звукът се записва от микрофона на компютъра, на който върви сървърът.');
+  $('mode-label').textContent = modeText();
+  renderMicState();
   for (const btn of document.querySelectorAll('.toggle')) btn.textContent = running ? t('Стоп') : t('Старт');
   renderClassifierStatus(classifierStatus);
   if (lastSound) onSound(lastSound);
@@ -176,6 +182,15 @@ $('side-lang').addEventListener('click', () => setLanguage(lang === 'bg' ? 'en' 
 
 // ---------- статус от сървъра ----------
 
+let sourceInfo = { kind: 'device', name: null };
+
+function modeText() {
+  if (sourceInfo.kind === 'browser') return t('Звукът идва от микрофона на свързано устройство: {name}.', { name: sourceInfo.name });
+  return demoMode
+    ? t('Демо режим: сигналът е симулиран, микрофонът не се ползва.')
+    : t('Звукът се записва от микрофона на компютъра, на който върви сървърът.');
+}
+
 function onStatus(s) {
   running = s.running;
   demoMode = s.demo;
@@ -189,13 +204,12 @@ function onStatus(s) {
     btn.textContent = running ? t('Стоп') : t('Старт');
     btn.classList.toggle('btn-primary', !running);
   }
-  $('mode-label').textContent = s.demo
-    ? t('Демо режим: сигналът е симулиран, микрофонът не се ползва.')
-    : t('Звукът се записва от микрофона на компютъра, на който върви сървърът.');
+  sourceInfo = s.source;
+  $('mode-label').textContent = modeText();
   if (document.activeElement !== $('offset')) $('offset').value = s.calibration_offset;
   $('offset-default').textContent = t('Типичен ({n})', { n: defaultCalibration });
   const sel = $('device');
-  sel.disabled = s.demo;
+  sel.disabled = s.demo || s.source.kind === 'browser';
   if (!s.demo) sel.value = s.device === null ? '' : String(s.device);
   if (s.error) showError(s.error);
   else if (running) showError('');
@@ -418,6 +432,7 @@ function connect() {
     } else if (m.type === 'status') onStatus(m);
     else if (m.type === 'alarm') onAlarm(m);
     else if (m.type === 'sound') onSound(m);
+    else if (m.type === 'schedule_done') onScheduleDone(m);
   };
   ws.onclose = () => {
     setConn('closed');

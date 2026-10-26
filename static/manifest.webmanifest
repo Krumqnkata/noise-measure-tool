@@ -1,0 +1,17 @@
+{
+  "name": "Шумомер",
+  "short_name": "Шумомер",
+  "description": "Измерване на шум в реално време – ниво, норми, разпознаване на източника и записи.",
+  "lang": "bg",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#101a22",
+  "theme_color": "#101a22",
+  "icons": [
+    { "src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/static/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

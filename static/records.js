@@ -41,6 +41,103 @@ $('rec-stop').addEventListener('click', async () => {
   loadList();
 });
 
+// ---------- график ----------
+
+const DAY_NAMES = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'];
+let scheduleDays = new Set([0, 1, 2, 3, 4, 5, 6]);
+
+function daysText(days) {
+  if (days.length === 7) return t('всеки ден');
+  if (days === '01234') return t('делнични дни');
+  if (days === '56') return t('събота и неделя');
+  return [...days].map((d) => t(DAY_NAMES[Number(d)])).join(', ');
+}
+
+function renderDayButtons() {
+  $('sch-days').replaceChildren(...DAY_NAMES.map((name, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = t(name);
+    b.setAttribute('aria-pressed', scheduleDays.has(i));
+    b.addEventListener('click', () => {
+      if (scheduleDays.has(i)) scheduleDays.delete(i); else scheduleDays.add(i);
+      renderDayButtons();
+    });
+    return b;
+  }));
+}
+
+function renderSchedules(list) {
+  const ul = $('sch-list');
+  ul.replaceChildren();
+  if (!list.length) {
+    const li = document.createElement('li');
+    li.className = 'py-2 text-sm text-ink3';
+    li.textContent = t('Няма график.');
+    ul.appendChild(li);
+  }
+  for (const s of list) {
+    const li = document.createElement('li');
+    li.className = 'flex flex-wrap items-center justify-between gap-3 py-2';
+    li.innerHTML = `
+      <label class="flex min-w-0 items-center gap-3"><input type="checkbox" class="h-4 w-4 accent-accent">
+        <span class="min-w-0"><span class="block truncate font-medium"></span><span class="text-sm text-ink3"></span></span></label>
+      <button class="btn px-2.5 py-1 text-crit-ink"></button>`;
+    const [toggle] = li.getElementsByTagName('input');
+    const spans = li.querySelectorAll('label > span > span');
+    toggle.checked = !!s.enabled;
+    spans[0].textContent = s.name;
+    spans[1].textContent = `${s.start_time}–${s.end_time}, ${daysText(s.days)}`;
+    toggle.addEventListener('change', () => saveSchedule({ ...s, enabled: toggle.checked }, s.id));
+    const del = li.querySelector('button');
+    del.textContent = t('Изтрий');
+    del.addEventListener('click', async () => {
+      if (!confirm(t('Да изтрия ли графика „{name}“?', { name: s.name }))) return;
+      try { renderSchedules((await api(`/api/schedules/${s.id}`, undefined, 'DELETE')).schedules); } catch (e) { showError(e.message); }
+    });
+    ul.appendChild(li);
+  }
+}
+
+async function loadSchedules() {
+  try { renderSchedules((await api('/api/schedules')).schedules); } catch { /* не е критично */ }
+}
+
+async function saveSchedule(data, id) {
+  const body = { name: data.name, days: data.days, start_time: data.start_time, end_time: data.end_time, enabled: !!data.enabled };
+  try {
+    const res = id ? await api(`/api/schedules/${id}`, body, 'PUT') : await api('/api/schedules', body);
+    renderSchedules(res.schedules);
+    showError('');
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+$('sch-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  if (!scheduleDays.size) { showError(t('Избери поне един ден.')); return; }
+  saveSchedule({
+    name: $('sch-name').value.trim(),
+    days: [...scheduleDays].sort().join(''),
+    start_time: $('sch-start').value,
+    end_time: $('sch-end').value,
+    enabled: true,
+  });
+  $('sch-name').value = '';
+});
+$('sch-night').addEventListener('click', () => saveSchedule({
+  name: t('Нощ'), days: '0123456', start_time: '23:00', end_time: '07:00', enabled: true,
+}));
+
+function onScheduleDone(m) {
+  loadList();
+  if ('Notification' in window && Notification.permission === 'granted') {
+    const n = new Notification(t('Отчетът е готов'), { body: t('Записът „{name}“ приключи.', { name: m.name }) });
+    n.onclick = () => { window.focus(); location.hash = `#records/${m.session_id}`; };
+  }
+}
+
 // ---------- списък ----------
 
 async function loadList() {
@@ -146,6 +243,7 @@ function renderReport() {
   }
 
   a('csv').href = `/api/sessions/${session.id}/csv`;
+  a('pdf').href = `/report/${session.id}?print=1`;
   a('print').addEventListener('click', () => window.print());
   a('rename').addEventListener('click', renameSession);
   a('note').addEventListener('click', editNote);
@@ -185,6 +283,7 @@ function renderReport() {
 
     renderWorkplaceReport(f, summary);
     renderEnvironmentReport(f);
+    if (report.sleep) renderSleep(f, report.sleep);
 
     const diff = summary.lceq - summary.laeq;
     f('lowfreq').textContent = `LCeq − LAeq = ${diff.toFixed(1)} dB. ` + (diff > 15
@@ -282,6 +381,33 @@ function renderReport() {
 
 function redrawReport() {
   if (reportCharts) { drawTimeline(); drawHistogram(); drawIntervals(); }
+}
+
+// ---------- сън ----------
+
+function renderSleep(f, sleep) {
+  f('sleep-box').hidden = false;
+  const n = sleep.events.length;
+  const verdict = f('sleep-verdict');
+  verdict.textContent = n === 0
+    ? t('Тиха нощ – нито едно събитие над {thr} dB(A).', { thr: sleep.threshold })
+    : n <= sleep.max_events
+      ? t('{n} шумни събития над {thr} dB(A) – в препоръката на СЗО (до 10–15).', { n, thr: sleep.threshold })
+      : t('{n} шумни събития над {thr} dB(A) – повече от препоръчаните 10–15; сънят може да е нарушен.', { n, thr: sleep.threshold });
+  verdict.className = 'mt-3 font-medium ' + (n > sleep.max_events ? 'text-crit-ink' : '');
+  const ol = f('sleep-events');
+  for (const ev of sleep.events) {
+    const li = document.createElement('li');
+    li.className = 'flex flex-wrap items-center justify-between gap-x-4 py-1.5';
+    li.innerHTML = '<span class="tabular-nums text-ink2"></span><span class="flex items-center gap-2"><span aria-hidden="true"></span><span></span></span><span class="tabular-nums font-semibold"></span>';
+    const spans = li.querySelectorAll('span');
+    spans[0].textContent = fmtTime(ev.at);
+    const cat = ev.source ? soundCategory(ev.source) : null;
+    spans[2].textContent = cat ? cat.icon : '';
+    spans[3].textContent = cat ? t(cat.name) : t('неразпознат източник');
+    spans[4].textContent = `${ev.max.toFixed(1)} dB`;
+    ol.appendChild(li);
+  }
 }
 
 // ---------- работно място и околна среда в отчета ----------
@@ -540,8 +666,16 @@ async function deleteSession() {
 }
 
 function recordsOnShow(param) {
+  if (param === 'dashboard') {
+    showRecordsView('dashboard');
+    return;
+  }
+  showRecordsView('list');
   openSession(param ? parseInt(param, 10) || null : null);
+  loadSchedules();
 }
+
+renderDayButtons();
 
 // Отвореният активен запис се опреснява на всеки 5 секунди
 setInterval(() => {

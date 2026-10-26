@@ -80,6 +80,32 @@ def test_report_environment_periods(tmp_path):
     assert env["night"]["laeq"] is None and env["lden"] is None
 
 
+def test_dashboard_heatmap_profile_and_forecast(tmp_path):
+    db = Database(tmp_path / "t.db")
+    # 8 дни по 2 часа (10–12 ч) при 50 dB, а в 11 ч – 60 dB
+    for day in range(8):
+        start = datetime(2026, 10, 10 + day, 10, 0, 0).timestamp()
+        levels = [50.0] * 3600 + [60.0] * 3600
+        make_session(db, levels, start=start)
+    now = datetime(2026, 10, 17, 23, 30).timestamp()
+    dash = db.dashboard(days=30, now=now)
+    assert dash["days_covered"] == 8
+    cell = next(c for c in dash["heatmap"] if c["date"] == "2026-10-12" and c["hour"] == 11)
+    assert cell["laeq"] == 60.0 and cell["minutes"] == 60
+    # Прогнозата за утре в 11 ч (неделя) идва от профила – медианата там е 60 dB
+    tomorrow_11 = next(f for f in dash["forecast"] if datetime.fromtimestamp(f["t"]).hour == 11)
+    assert tomorrow_11["median"] == 60.0
+    assert len(dash["forecast"]) == 24
+    night = next(f for f in dash["forecast"] if datetime.fromtimestamp(f["t"]).hour == 3)
+    assert night["median"] is None          # в 3 ч никога не е мерено – празно, не нула
+
+
+def test_dashboard_without_a_week_has_no_forecast(tmp_path):
+    db = Database(tmp_path / "t.db")
+    make_session(db, [55.0] * 600)
+    assert db.dashboard(days=30, now=START + 3600)["forecast"] == []
+
+
 def test_migrates_old_database(tmp_path):
     path = tmp_path / "old.db"
     conn = sqlite3.connect(path)
